@@ -12,19 +12,16 @@ import (
 type Router struct {
 	router         *mux.Router
 	authHandler    *handler.AuthHandler
-	productHandler *handler.ProductHandler
 	authMiddleware *middleware.AuthMiddleware
 }
 
 func NewRouter(
 	authHandler *handler.AuthHandler,
-	productHandler *handler.ProductHandler,
 	authMiddleware *middleware.AuthMiddleware,
 ) *Router {
 	return &Router{
 		router:         mux.NewRouter(),
 		authHandler:    authHandler,
-		productHandler: productHandler,
 		authMiddleware: authMiddleware,
 	}
 }
@@ -38,7 +35,8 @@ func (r *Router) Setup() *mux.Router {
 
 	// Auth routes (public)
 	auth := api.PathPrefix("/auth").Subrouter()
-	auth.HandleFunc("/register", r.authHandler.Register).Methods(http.MethodPost)
+	auth.HandleFunc("/register/patient", r.authHandler.RegisterPatient).Methods(http.MethodPost)
+	auth.HandleFunc("/register/doctor", r.authHandler.RegisterDoctor).Methods(http.MethodPost)
 	auth.HandleFunc("/login", r.authHandler.Login).Methods(http.MethodPost)
 	auth.HandleFunc("/refresh-token", r.authHandler.RefreshToken).Methods(http.MethodPost)
 
@@ -47,18 +45,6 @@ func (r *Router) Setup() *mux.Router {
 	authProtected.Use(r.authMiddleware.Authenticate)
 	authProtected.HandleFunc("/logout", r.authHandler.Logout).Methods(http.MethodPost)
 	authProtected.HandleFunc("/me", r.authHandler.GetCurrentUser).Methods(http.MethodGet)
-
-	// Product routes (public)
-	products := api.PathPrefix("/products").Subrouter()
-	products.HandleFunc("", r.productHandler.GetAll).Methods(http.MethodGet)
-	products.HandleFunc("/{id}", r.productHandler.GetByID).Methods(http.MethodGet)
-
-	// Product routes (protected)
-	productsProtected := api.PathPrefix("/products").Subrouter()
-	productsProtected.Use(r.authMiddleware.Authenticate)
-	productsProtected.HandleFunc("", r.productHandler.Create).Methods(http.MethodPost)
-	productsProtected.HandleFunc("/{id}", r.productHandler.Update).Methods(http.MethodPut)
-	productsProtected.HandleFunc("/{id}", r.productHandler.Delete).Methods(http.MethodDelete)
 
 	// Add CORS middleware
 	r.router.Use(r.corsMiddleware)

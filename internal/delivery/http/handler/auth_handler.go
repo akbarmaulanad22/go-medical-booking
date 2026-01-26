@@ -26,19 +26,19 @@ func NewAuthHandler(authUsecase usecase.AuthUsecase, validator *validator.Custom
 	}
 }
 
-// Register handles user registration
-// @Summary Register a new user
-// @Description Register a new user with email, password, and name
+// RegisterPatient handles patient registration
+// @Summary Register a new patient
+// @Description Register a new patient with email, password, name, NIK, and other patient-specific data
 // @Tags Auth
 // @Accept json
 // @Produce json
-// @Param request body dto.RegisterRequest true "Register Request"
+// @Param request body dto.RegisterPatientRequest true "Register Patient Request"
 // @Success 201 {object} response.Response
 // @Failure 400 {object} response.Response
 // @Failure 409 {object} response.Response
-// @Router /auth/register [post]
-func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var req dto.RegisterRequest
+// @Router /auth/register/patient [post]
+func (h *AuthHandler) RegisterPatient(w http.ResponseWriter, r *http.Request) {
+	var req dto.RegisterPatientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "Invalid request body", nil)
 		return
@@ -49,18 +49,65 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.authUsecase.Register(r.Context(), &req)
+	user, err := h.authUsecase.RegisterPatient(r.Context(), &req)
 	if err != nil {
 		switch err {
 		case usecase.ErrEmailAlreadyExists:
 			response.Error(w, http.StatusConflict, "Email already exists", nil)
+		case usecase.ErrNIKAlreadyExists:
+			response.Error(w, http.StatusConflict, "NIK already exists", nil)
+		case usecase.ErrRoleNotFound:
+			response.InternalServerError(w, "Patient role not found in system")
+		case usecase.ErrInvalidDateFormat:
+			response.Error(w, http.StatusBadRequest, "Invalid date format, use YYYY-MM-DD", nil)
 		default:
-			response.InternalServerError(w, "Failed to register user")
+			response.InternalServerError(w, "Failed to register patient")
 		}
 		return
 	}
 
-	response.Success(w, http.StatusCreated, "User registered successfully", user)
+	response.Success(w, http.StatusCreated, "Patient registered successfully", user)
+}
+
+// RegisterDoctor handles doctor registration
+// @Summary Register a new doctor
+// @Description Register a new doctor with email, password, name, STR number, and specialization
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param request body dto.RegisterDoctorRequest true "Register Doctor Request"
+// @Success 201 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 409 {object} response.Response
+// @Router /auth/register/doctor [post]
+func (h *AuthHandler) RegisterDoctor(w http.ResponseWriter, r *http.Request) {
+	var req dto.RegisterDoctorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid request body", nil)
+		return
+	}
+
+	if err := h.validator.Validate(&req); err != nil {
+		response.ValidationError(w, h.validator.FormatValidationErrors(err))
+		return
+	}
+
+	user, err := h.authUsecase.RegisterDoctor(r.Context(), &req)
+	if err != nil {
+		switch err {
+		case usecase.ErrEmailAlreadyExists:
+			response.Error(w, http.StatusConflict, "Email already exists", nil)
+		case usecase.ErrSTRAlreadyExists:
+			response.Error(w, http.StatusConflict, "STR number already exists", nil)
+		case usecase.ErrRoleNotFound:
+			response.InternalServerError(w, "Doctor role not found in system")
+		default:
+			response.InternalServerError(w, "Failed to register doctor")
+		}
+		return
+	}
+
+	response.Success(w, http.StatusCreated, "Doctor registered successfully", user)
 }
 
 // Login handles user login

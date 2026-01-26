@@ -6,12 +6,14 @@ MAIN_PATH=./cmd/main.go
 BUILD_DIR=./build
 MIGRATIONS_DIR=./migrations
 
+# Load .env file
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
 # Database
-DB_HOST ?= localhost
-DB_PORT ?= 5432
-DB_USER ?= postgres
-DB_PASSWORD ?= postgres
-DB_NAME ?= clean_architecture
+# Variables are loaded from .env
 DB_URL=postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
 # Colors
