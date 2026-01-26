@@ -1,6 +1,6 @@
-# Go Template Clean Architecture
+# Go Medical Booking API
 
-A production-ready Go REST API template implementing **Clean Architecture** with authentication using **JWT + Redis** for secure token management.
+A production-ready Go REST API for **Medical Booking** implementing **Clean Architecture** with authentication using **JWT + Redis** for secure token management.
 
 ## 🏗️ Architecture
 
@@ -25,7 +25,7 @@ This project follows the Clean Architecture principles:
 ## 📁 Project Structure
 
 ```
-go-template-clean-architecture/
+go-medical-booking/
 ├── cmd/
 │   └── main.go                    # Entry point
 ├── config/
@@ -60,14 +60,14 @@ go-template-clean-architecture/
 ## ✨ Features
 
 - **Clean Architecture** - Separation of concerns with dependency injection
+- **Role-based Registration** - Separate registration for Patient and Doctor
 - **Authentication**
-  - User registration
+  - User registration (Patient/Doctor)
   - Login with JWT tokens
   - Logout (token revocation)
   - Refresh token rotation
   - Get current user
 - **JWT + Redis Security** - Tokens stored in Redis for revocation support
-- **CRUD Example** - Complete Product CRUD with pagination
 - **Database Migration** - SQL migrations with golang-migrate
 - **Request Validation** - Input validation with go-playground/validator
 - **Structured Logging** - JSON logging with logrus
@@ -101,8 +101,8 @@ go-template-clean-architecture/
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/akbarmaulanad22/go-clean-architecture-template.git
-   cd go-template-clean-architecture
+   git clone https://github.com/akbarmaulanad22/go-medical-booking.git
+   cd go-medical-booking
    ```
 
 2. **Copy environment file**
@@ -119,7 +119,7 @@ go-template-clean-architecture/
    DB_PORT=5432
    DB_USER=postgres
    DB_PASSWORD=postgres
-   DB_NAME=clean_architecture
+   DB_NAME=medical_booking
 
    REDIS_HOST=localhost
    REDIS_PORT=6379
@@ -135,7 +135,7 @@ go-template-clean-architecture/
    
    Make sure PostgreSQL is installed and running. Create the database:
    ```sql
-   CREATE DATABASE clean_architecture;
+   CREATE DATABASE medical_booking;
    ```
 
 5. **Setup Redis**
@@ -215,21 +215,12 @@ You can use the following tools to view the documentation:
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| POST | `/api/v1/auth/register` | Register new user | ❌ |
+| POST | `/api/v1/auth/register/patient` | Register new patient | ❌ |
+| POST | `/api/v1/auth/register/doctor` | Register new doctor | ❌ |
 | POST | `/api/v1/auth/login` | Login user | ❌ |
 | POST | `/api/v1/auth/logout` | Logout user | ✅ |
 | POST | `/api/v1/auth/refresh-token` | Refresh tokens | ❌ |
 | GET | `/api/v1/auth/me` | Get current user | ✅ |
-
-#### Products (CRUD Example)
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/api/v1/products` | List all products | ❌ |
-| GET | `/api/v1/products/{id}` | Get product by ID | ❌ |
-| POST | `/api/v1/products` | Create product | ✅ |
-| PUT | `/api/v1/products/{id}` | Update product | ✅ |
-| DELETE | `/api/v1/products/{id}` | Delete product | ✅ |
 
 #### Health Check
 
@@ -249,6 +240,106 @@ Token security flow:
 Redis key format:
 - Access token: `access_token:{user_id}:{token_id}`
 - Refresh token: `refresh_token:{user_id}:{token_id}`
+
+## 📌 Extending the Project (CRUD Operations)
+
+Jika Anda ingin menambahkan fitur CRUD baru (misalnya: Booking, Schedule, dll), gunakan referensi berikut:
+
+### Contoh Pattern yang Digunakan
+
+#### 1. **Usecase Layer** - Lihat `internal/usecase/auth_usecase.go`
+
+```go
+// Contoh struct usecase dengan dependency injection
+type authUsecase struct {
+    db                 *gorm.DB          // untuk transaction
+    log                *logrus.Logger    // untuk logging
+    userRepo           repository.UserRepository
+    // ... repository lainnya
+}
+
+// Constructor dengan dependency injection
+func NewAuthUsecase(
+    db *gorm.DB,
+    log *logrus.Logger,
+    userRepo repository.UserRepository,
+    // ... dependencies lainnya
+) AuthUsecase {
+    return &authUsecase{
+        db:       db,
+        log:      log,
+        userRepo: userRepo,
+        // ...
+    }
+}
+```
+
+#### 2. **Database Transaction** - Pattern yang digunakan
+
+```go
+// Contoh penggunaan transaction di usecase
+func (u *authUsecase) RegisterPatient(ctx context.Context, req *dto.RegisterPatientRequest) (*dto.UserResponse, error) {
+    // Mulai transaction
+    tx := u.db.WithContext(ctx).Begin()
+    defer tx.Rollback() // Rollback otomatis jika terjadi error
+
+    // Operasi 1: Create user
+    if err := u.userRepo.Create(tx, user); err != nil {
+        return nil, err // Transaction akan di-rollback
+    }
+
+    // Operasi 2: Create profile
+    if err := u.patientProfileRepo.Create(ctx, tx, patientProfile); err != nil {
+        return nil, err // Transaction akan di-rollback
+    }
+
+    // Commit jika semua operasi berhasil
+    if err := tx.Commit().Error; err != nil {
+        return nil, err
+    }
+
+    return response, nil
+}
+```
+
+#### 3. **Repository Interface** - Lihat `internal/domain/repository/user_repository.go`
+
+```go
+type UserRepository interface {
+    Create(db *gorm.DB, user *entity.User) error
+    FindByEmail(db *gorm.DB, email string) (*entity.User, error)
+    FindByID(db *gorm.DB, id uuid.UUID) (*entity.User, error)
+    // Tambahkan: Update, Delete, FindAll, dll
+}
+```
+
+#### 4. **Repository Implementation** - Lihat `internal/repository/user_repository_impl.go`
+
+```go
+type userRepository struct{}
+
+func NewUserRepository() domainRepo.UserRepository {
+    return &userRepository{}
+}
+
+// Parameter pertama adalah *gorm.DB untuk mendukung transaction
+func (r *userRepository) Create(db *gorm.DB, user *entity.User) error {
+    return db.Create(user).Error
+}
+
+func (r *userRepository) FindByEmail(db *gorm.DB, email string) (*entity.User, error) {
+    var user entity.User
+    err := db.Where("email = ?", email).First(&user).Error
+    return &user, err
+}
+```
+
+### Catatan Penting
+
+1. **Transaction**: Selalu gunakan `tx := u.db.WithContext(ctx).Begin()` di awal operasi yang membutuhkan atomicity
+2. **Defer Rollback**: Gunakan `defer tx.Rollback()` - akan diabaikan jika sudah `Commit()`
+3. **Repository Parameter**: Parameter pertama repository adalah `*gorm.DB` agar bisa menerima transaction (`tx`) atau database biasa (`db`)
+4. **Error Handling**: Gunakan helper function seperti `isDuplicateKeyError()` untuk PostgreSQL-specific errors
 
 ## 🧪 Testing
 

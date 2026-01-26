@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Go Clean Architecture API",
-    "description": "REST API dengan Clean Architecture menggunakan JWT + Redis untuk authentication.\n\n## Authentication\nAPI ini menggunakan JWT Bearer token untuk authentication. Setelah login, sertakan token di header `Authorization: Bearer <token>` untuk mengakses endpoint yang protected.\n\n## Token Security\nToken disimpan di Redis sehingga dapat di-revoke kapan saja. Jika terjadi pencurian token, cukup logout atau hapus token dari Redis untuk membatalkan akses.",
+    "title": "Go Medical Booking API",
+    "description": "REST API untuk Medical Booking dengan Clean Architecture menggunakan JWT + Redis untuk authentication.\n\n## Authentication\nAPI ini menggunakan JWT Bearer token untuk authentication. Setelah login, sertakan token di header `Authorization: Bearer <token>` untuk mengakses endpoint yang protected.\n\n## Token Security\nToken disimpan di Redis sehingga dapat di-revoke kapan saja. Jika terjadi pencurian token, cukup logout atau hapus token dari Redis untuk membatalkan akses.\n\n## Roles\n- **Patient**: Pasien yang dapat melakukan booking\n- **Doctor**: Dokter yang melayani pasien",
     "version": "1.0.0",
     "contact": {
       "name": "API Support",
@@ -27,10 +27,6 @@
     {
       "name": "Auth",
       "description": "Authentication endpoints"
-    },
-    {
-      "name": "Products",
-      "description": "Product CRUD endpoints"
     }
   ],
   "paths": {
@@ -60,25 +56,25 @@
         }
       }
     },
-    "/auth/register": {
+    "/auth/register/patient": {
       "post": {
         "tags": ["Auth"],
-        "summary": "Register new user",
-        "description": "Create a new user account",
-        "operationId": "register",
+        "summary": "Register new patient",
+        "description": "Create a new patient account with patient profile information",
+        "operationId": "registerPatient",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RegisterRequest"
+                "$ref": "#/components/schemas/RegisterPatientRequest"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "User registered successfully",
+            "description": "Patient registered successfully",
             "content": {
               "application/json": {
                 "schema": {
@@ -108,7 +104,67 @@
             }
           },
           "409": {
-            "description": "Email already exists",
+            "description": "Email or NIK already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register/doctor": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register new doctor",
+        "description": "Create a new doctor account with doctor profile information",
+        "operationId": "registerDoctor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDoctorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Doctor registered successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessResponse" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email or STR number already exists",
             "content": {
               "application/json": {
                 "schema": {
@@ -187,15 +243,6 @@
         "description": "Revoke current tokens",
         "operationId": "logout",
         "security": [{ "BearerAuth": [] }],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LogoutRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Logout successful",
@@ -330,328 +377,6 @@
           }
         }
       }
-    },
-    "/products": {
-      "get": {
-        "tags": ["Products"],
-        "summary": "Get all products",
-        "description": "Get all products with pagination",
-        "operationId": "getProducts",
-        "parameters": [
-          {
-            "name": "page",
-            "in": "query",
-            "description": "Page number",
-            "schema": {
-              "type": "integer",
-              "default": 1,
-              "minimum": 1
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Items per page",
-            "schema": {
-              "type": "integer",
-              "default": 10,
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Products retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/SuccessResponse" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": {
-                          "type": "array",
-                          "items": {
-                            "$ref": "#/components/schemas/ProductResponse"
-                          }
-                        },
-                        "meta": {
-                          "$ref": "#/components/schemas/PaginationMeta"
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": ["Products"],
-        "summary": "Create product",
-        "description": "Create a new product",
-        "operationId": "createProduct",
-        "security": [{ "BearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateProductRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Product created successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/SuccessResponse" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": {
-                          "$ref": "#/components/schemas/ProductResponse"
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/products/{id}": {
-      "get": {
-        "tags": ["Products"],
-        "summary": "Get product by ID",
-        "description": "Get a product by its ID",
-        "operationId": "getProductById",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "Product UUID",
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Product retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/SuccessResponse" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": {
-                          "$ref": "#/components/schemas/ProductResponse"
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid product ID",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Product not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": ["Products"],
-        "summary": "Update product",
-        "description": "Update a product by its ID",
-        "operationId": "updateProduct",
-        "security": [{ "BearerAuth": [] }],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "Product UUID",
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateProductRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Product updated successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    { "$ref": "#/components/schemas/SuccessResponse" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "data": {
-                          "$ref": "#/components/schemas/ProductResponse"
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Product not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": ["Products"],
-        "summary": "Delete product",
-        "description": "Delete a product by its ID",
-        "operationId": "deleteProduct",
-        "security": [{ "BearerAuth": [] }],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "Product UUID",
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Product deleted successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Product not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
@@ -664,24 +389,85 @@
       }
     },
     "schemas": {
-      "RegisterRequest": {
+      "RegisterPatientRequest": {
         "type": "object",
-        "required": ["email", "password", "name"],
+        "required": ["email", "password", "full_name", "nik", "date_of_birth", "gender"],
         "properties": {
           "email": {
             "type": "string",
             "format": "email",
-            "example": "user@example.com"
+            "example": "patient@example.com"
           },
           "password": {
             "type": "string",
             "minLength": 6,
             "example": "password123"
           },
-          "name": {
+          "full_name": {
             "type": "string",
             "minLength": 2,
-            "example": "John Doe"
+            "example": "John Patient"
+          },
+          "nik": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 16,
+            "example": "1234567890123456",
+            "description": "NIK (Nomor Induk Kependudukan) - 16 digits"
+          },
+          "phone_number": {
+            "type": "string",
+            "example": "081234567890"
+          },
+          "date_of_birth": {
+            "type": "string",
+            "format": "date",
+            "example": "1990-01-15",
+            "description": "Format: YYYY-MM-DD"
+          },
+          "gender": {
+            "type": "string",
+            "enum": ["M", "F"],
+            "example": "M",
+            "description": "M = Male, F = Female"
+          },
+          "address": {
+            "type": "string",
+            "example": "Jl. Contoh No. 123, Jakarta"
+          }
+        }
+      },
+      "RegisterDoctorRequest": {
+        "type": "object",
+        "required": ["email", "password", "full_name", "str_number", "specialization"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "doctor@example.com"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 6,
+            "example": "password123"
+          },
+          "full_name": {
+            "type": "string",
+            "minLength": 2,
+            "example": "Dr. Jane Smith"
+          },
+          "str_number": {
+            "type": "string",
+            "example": "STR-12345678",
+            "description": "Surat Tanda Registrasi Number"
+          },
+          "specialization": {
+            "type": "string",
+            "example": "General Practitioner"
+          },
+          "biography": {
+            "type": "string",
+            "example": "Experienced doctor with 10 years of practice"
           }
         }
       },
@@ -700,16 +486,6 @@
           }
         }
       },
-      "LogoutRequest": {
-        "type": "object",
-        "properties": {
-          "refresh_token": {
-            "type": "string",
-            "description": "Optional refresh token to revoke",
-            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-          }
-        }
-      },
       "RefreshTokenRequest": {
         "type": "object",
         "required": ["refresh_token"],
@@ -717,57 +493,6 @@
           "refresh_token": {
             "type": "string",
             "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-          }
-        }
-      },
-      "CreateProductRequest": {
-        "type": "object",
-        "required": ["name", "price"],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 2,
-            "example": "Product Name"
-          },
-          "description": {
-            "type": "string",
-            "example": "Product description"
-          },
-          "price": {
-            "type": "number",
-            "format": "decimal",
-            "example": 99.99
-          },
-          "stock": {
-            "type": "integer",
-            "minimum": 0,
-            "default": 0,
-            "example": 100
-          }
-        }
-      },
-      "UpdateProductRequest": {
-        "type": "object",
-        "required": ["name", "price"],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 2,
-            "example": "Updated Product Name"
-          },
-          "description": {
-            "type": "string",
-            "example": "Updated product description"
-          },
-          "price": {
-            "type": "number",
-            "format": "decimal",
-            "example": 149.99
-          },
-          "stock": {
-            "type": "integer",
-            "minimum": 0,
-            "example": 50
           }
         }
       },
@@ -833,9 +558,14 @@
             "format": "email",
             "example": "user@example.com"
           },
-          "name": {
+          "full_name": {
             "type": "string",
             "example": "John Doe"
+          },
+          "role": {
+            "type": "string",
+            "example": "patient",
+            "description": "User role: patient or doctor"
           },
           "created_at": {
             "type": "string",
@@ -864,64 +594,6 @@
             "type": "integer",
             "description": "Access token expiry in seconds",
             "example": 900
-          }
-        }
-      },
-      "ProductResponse": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "example": "550e8400-e29b-41d4-a716-446655440000"
-          },
-          "name": {
-            "type": "string",
-            "example": "Product Name"
-          },
-          "description": {
-            "type": "string",
-            "example": "Product description"
-          },
-          "price": {
-            "type": "number",
-            "format": "decimal",
-            "example": 99.99
-          },
-          "stock": {
-            "type": "integer",
-            "example": 100
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "example": "2024-01-25T10:30:00Z"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "example": "2024-01-25T10:30:00Z"
-          }
-        }
-      },
-      "PaginationMeta": {
-        "type": "object",
-        "properties": {
-          "page": {
-            "type": "integer",
-            "example": 1
-          },
-          "limit": {
-            "type": "integer",
-            "example": 10
-          },
-          "total": {
-            "type": "integer",
-            "example": 100
-          },
-          "total_pages": {
-            "type": "integer",
-            "example": 10
           }
         }
       }
