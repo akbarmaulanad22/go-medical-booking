@@ -13,16 +13,19 @@ type Router struct {
 	router         *mux.Router
 	authHandler    *handler.AuthHandler
 	authMiddleware *middleware.AuthMiddleware
+	corsMiddleware *middleware.CORSMiddleware
 }
 
 func NewRouter(
 	authHandler *handler.AuthHandler,
 	authMiddleware *middleware.AuthMiddleware,
+	corsMiddleware *middleware.CORSMiddleware,
 ) *Router {
 	return &Router{
 		router:         mux.NewRouter(),
 		authHandler:    authHandler,
 		authMiddleware: authMiddleware,
+		corsMiddleware: corsMiddleware,
 	}
 }
 
@@ -47,7 +50,7 @@ func (r *Router) Setup() *mux.Router {
 	authProtected.HandleFunc("/me", r.authHandler.GetCurrentUser).Methods(http.MethodGet)
 
 	// Add CORS middleware
-	r.router.Use(r.corsMiddleware)
+	r.router.Use(r.corsMiddleware.Handle)
 
 	return r.router
 }
@@ -56,19 +59,4 @@ func (r *Router) healthCheck(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status": "ok"}`))
-}
-
-func (r *Router) corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if req.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, req)
-	})
 }

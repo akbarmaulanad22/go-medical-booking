@@ -103,9 +103,10 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, redisClient)
+	corsMiddleware := middleware.NewCORSMiddleware()
 
 	// Initialize router
-	router := deliveryHttp.NewRouter(authHandler, authMiddleware)
+	router := deliveryHttp.NewRouter(authHandler, authMiddleware, corsMiddleware)
 	httpRouter := router.Setup()
 
 	// Create server
