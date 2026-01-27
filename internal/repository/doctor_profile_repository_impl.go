@@ -2,7 +2,6 @@ package repository
 
 import (
 	"errors"
-
 	"go-template-clean-architecture/internal/domain/entity"
 	domainRepo "go-template-clean-architecture/internal/domain/repository"
 

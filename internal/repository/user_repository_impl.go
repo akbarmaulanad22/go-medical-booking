@@ -33,3 +33,8 @@ func (r *userRepository) FindByID(db *gorm.DB, id uuid.UUID) (*entity.User, erro
 func (r *userRepository) Update(db *gorm.DB, user *entity.User) error {
 	return db.Save(user).Error
 }
+
+func (r *userRepository) Delete(db *gorm.DB, userID uuid.UUID) (int64, error) {
+	affected := db.Where("id = ?", userID).Delete(&entity.User{})
+	return affected.RowsAffected, affected.Error
+}

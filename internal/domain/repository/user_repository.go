@@ -12,4 +12,5 @@ type UserRepository interface {
 	FindByEmail(db *gorm.DB, email string) (*entity.User, error)
 	FindByID(db *gorm.DB, id uuid.UUID) (*entity.User, error)
 	Update(db *gorm.DB, user *entity.User) error
+	Delete(db *gorm.DB, userID uuid.UUID) (int64, error)
 }

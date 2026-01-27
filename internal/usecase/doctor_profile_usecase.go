@@ -185,25 +185,16 @@ func (u *doctorProfileUsecase) DeleteDoctor(ctx context.Context, userID uuid.UUI
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
-	profile, err := u.doctorProfileRepo.FindByUserID(tx, userID)
+	affectedRows, err := u.userRepo.Delete(tx, userID)
 	if err != nil {
-		u.log.Warnf("Failed to find doctor profile: %+v", err)
+		u.log.Warnf("Failed delete doctor: %+v", err)
 		return err
 	}
-	if profile == nil {
+
+	if affectedRows == 0 {
+		u.log.Warnf("Failed delete doctor: %+v", "doctor not found")
+
 		return ErrDoctorNotFound
-	}
-
-	// Delete doctor profile first (foreign key constraint)
-	if err := u.doctorProfileRepo.Delete(tx, userID); err != nil {
-		u.log.Warnf("Failed to delete doctor profile: %+v", err)
-		return err
-	}
-
-	// Delete user
-	if err := tx.Where("id = ?", userID).Delete(&entity.User{}).Error; err != nil {
-		u.log.Warnf("Failed to delete user: %+v", err)
-		return err
 	}
 
 	if err := tx.Commit().Error; err != nil {
