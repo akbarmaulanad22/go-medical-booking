@@ -10,22 +10,28 @@ import (
 )
 
 type Router struct {
-	router         *mux.Router
-	authHandler    *handler.AuthHandler
-	authMiddleware *middleware.AuthMiddleware
-	corsMiddleware *middleware.CORSMiddleware
+	router                *mux.Router
+	authHandler           *handler.AuthHandler
+	doctorHandler         *handler.DoctorHandler
+	doctorScheduleHandler *handler.DoctorScheduleHandler
+	authMiddleware        *middleware.AuthMiddleware
+	corsMiddleware        *middleware.CORSMiddleware
 }
 
 func NewRouter(
 	authHandler *handler.AuthHandler,
+	doctorHandler *handler.DoctorHandler,
+	doctorScheduleHandler *handler.DoctorScheduleHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	corsMiddleware *middleware.CORSMiddleware,
 ) *Router {
 	return &Router{
-		router:         mux.NewRouter(),
-		authHandler:    authHandler,
-		authMiddleware: authMiddleware,
-		corsMiddleware: corsMiddleware,
+		router:                mux.NewRouter(),
+		authHandler:           authHandler,
+		doctorHandler:         doctorHandler,
+		doctorScheduleHandler: doctorScheduleHandler,
+		authMiddleware:        authMiddleware,
+		corsMiddleware:        corsMiddleware,
 	}
 }
 
@@ -48,6 +54,26 @@ func (r *Router) Setup() *mux.Router {
 	authProtected.Use(r.authMiddleware.Authenticate)
 	authProtected.HandleFunc("/logout", r.authHandler.Logout).Methods(http.MethodPost)
 	authProtected.HandleFunc("/me", r.authHandler.GetCurrentUser).Methods(http.MethodGet)
+
+	// Admin routes (protected)
+	admin := api.PathPrefix("/admin").Subrouter()
+	admin.Use(r.authMiddleware.Authenticate)
+	// TODO: Add admin role check middleware
+
+	// Doctor management (admin)
+	admin.HandleFunc("/doctors", r.doctorHandler.CreateDoctor).Methods(http.MethodPost)
+	admin.HandleFunc("/doctors", r.doctorHandler.GetAllDoctors).Methods(http.MethodGet)
+	admin.HandleFunc("/doctors/{id}", r.doctorHandler.GetDoctor).Methods(http.MethodGet)
+	admin.HandleFunc("/doctors/{id}", r.doctorHandler.UpdateDoctor).Methods(http.MethodPut)
+	admin.HandleFunc("/doctors/{id}", r.doctorHandler.DeleteDoctor).Methods(http.MethodDelete)
+
+	// Schedule management (admin)
+	admin.HandleFunc("/schedules", r.doctorScheduleHandler.CreateSchedule).Methods(http.MethodPost)
+	admin.HandleFunc("/schedules", r.doctorScheduleHandler.GetAllSchedules).Methods(http.MethodGet)
+	admin.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.GetSchedule).Methods(http.MethodGet)
+	admin.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.UpdateSchedule).Methods(http.MethodPut)
+	admin.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.DeleteSchedule).Methods(http.MethodDelete)
+	admin.HandleFunc("/doctors/{doctorId}/schedules", r.doctorScheduleHandler.GetSchedulesByDoctor).Methods(http.MethodGet)
 
 	// Add CORS middleware
 	r.router.Use(r.corsMiddleware.Handle)

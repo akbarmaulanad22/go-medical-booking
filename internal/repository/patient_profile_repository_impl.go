@@ -11,32 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Doctor Profile Repository
-
-type doctorProfileRepository struct{}
-
-func NewDoctorProfileRepository() domainRepo.DoctorProfileRepository {
-	return &doctorProfileRepository{}
-}
-
-func (r *doctorProfileRepository) Create(ctx context.Context, db *gorm.DB, profile *entity.DoctorProfile) error {
-	return db.WithContext(ctx).Create(profile).Error
-}
-
-func (r *doctorProfileRepository) FindByUserID(ctx context.Context, db *gorm.DB, userID uuid.UUID) (*entity.DoctorProfile, error) {
-	var profile entity.DoctorProfile
-	err := db.WithContext(ctx).Where("user_id = ?", userID).First(&profile).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &profile, nil
-}
-
-// Patient Profile Repository
-
 type patientProfileRepository struct{}
 
 func NewPatientProfileRepository() domainRepo.PatientProfileRepository {
@@ -57,4 +31,21 @@ func (r *patientProfileRepository) FindByUserID(ctx context.Context, db *gorm.DB
 		return nil, err
 	}
 	return &profile, nil
+}
+
+func (r *patientProfileRepository) FindAll(ctx context.Context, db *gorm.DB) ([]entity.PatientProfile, error) {
+	var profiles []entity.PatientProfile
+	err := db.WithContext(ctx).Preload("User").Find(&profiles).Error
+	if err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
+func (r *patientProfileRepository) Update(ctx context.Context, db *gorm.DB, profile *entity.PatientProfile) error {
+	return db.WithContext(ctx).Save(profile).Error
+}
+
+func (r *patientProfileRepository) Delete(ctx context.Context, db *gorm.DB, userID uuid.UUID) error {
+	return db.WithContext(ctx).Where("user_id = ?", userID).Delete(&entity.PatientProfile{}).Error
 }

@@ -29,3 +29,7 @@ func (r *userRepository) FindByID(db *gorm.DB, id uuid.UUID) (*entity.User, erro
 	err := db.Where("id = ?", id).First(&user).Error
 	return &user, err
 }
+
+func (r *userRepository) Update(db *gorm.DB, user *entity.User) error {
+	return db.Save(user).Error
+}

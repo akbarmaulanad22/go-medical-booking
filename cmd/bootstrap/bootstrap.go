@@ -91,22 +91,27 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 	roleRepo := repository.NewRoleRepository()
 	doctorProfileRepo := repository.NewDoctorProfileRepository()
 	patientProfileRepo := repository.NewPatientProfileRepository()
+	doctorScheduleRepo := repository.NewDoctorScheduleRepository()
 
 	// Initialize logger
 	log := logrus.StandardLogger()
 
 	// Initialize usecases
 	authUsecase := usecase.NewAuthUsecase(db, log, userRepo, roleRepo, doctorProfileRepo, patientProfileRepo, jwtService, redisClient)
+	doctorProfileUsecase := usecase.NewDoctorProfileUsecase(db, log, userRepo, doctorProfileRepo)
+	doctorScheduleUsecase := usecase.NewDoctorScheduleUsecase(db, log, doctorScheduleRepo, doctorProfileRepo)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authUsecase, customValidator, jwtService)
+	doctorHandler := handler.NewDoctorHandler(doctorProfileUsecase, customValidator)
+	doctorScheduleHandler := handler.NewDoctorScheduleHandler(doctorScheduleUsecase, customValidator)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, redisClient)
 	corsMiddleware := middleware.NewCORSMiddleware()
 
 	// Initialize router
-	router := deliveryHttp.NewRouter(authHandler, authMiddleware, corsMiddleware)
+	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, authMiddleware, corsMiddleware)
 	httpRouter := router.Setup()
 
 	// Create server

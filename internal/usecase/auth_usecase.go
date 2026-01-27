@@ -97,7 +97,6 @@ func (u *authUsecase) RegisterPatient(ctx context.Context, req *dto.RegisterPati
 		Password: string(hashedPassword),
 		FullName: req.FullName,
 		RoleID:   entity.RoleIDPatient,
-		IsActive: true,
 	}
 
 	if err := u.userRepo.Create(tx, user); err != nil {
@@ -161,7 +160,6 @@ func (u *authUsecase) RegisterDoctor(ctx context.Context, req *dto.RegisterDocto
 		Password: string(hashedPassword),
 		FullName: req.FullName,
 		RoleID:   entity.RoleIDDoctor,
-		IsActive: true,
 	}
 
 	if err := u.userRepo.Create(tx, user); err != nil {
@@ -183,7 +181,7 @@ func (u *authUsecase) RegisterDoctor(ctx context.Context, req *dto.RegisterDocto
 		Biography:      req.Biography,
 	}
 
-	if err := u.doctorProfileRepo.Create(ctx, tx, doctorProfile); err != nil {
+	if err := u.doctorProfileRepo.Create(tx, doctorProfile); err != nil {
 		if isDuplicateKeyError(err, "str_number") {
 			return nil, ErrSTRAlreadyExists
 		}
