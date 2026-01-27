@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"context"
 	"errors"
 
 	"go-template-clean-architecture/internal/domain/entity"
@@ -17,13 +16,13 @@ func NewDoctorScheduleRepository() domainRepo.DoctorScheduleRepository {
 	return &doctorScheduleRepository{}
 }
 
-func (r *doctorScheduleRepository) Create(ctx context.Context, db *gorm.DB, schedule *entity.DoctorSchedule) error {
-	return db.WithContext(ctx).Create(schedule).Error
+func (r *doctorScheduleRepository) Create(db *gorm.DB, schedule *entity.DoctorSchedule) error {
+	return db.Create(schedule).Error
 }
 
-func (r *doctorScheduleRepository) FindByID(ctx context.Context, db *gorm.DB, id int) (*entity.DoctorSchedule, error) {
+func (r *doctorScheduleRepository) FindByID(db *gorm.DB, id int) (*entity.DoctorSchedule, error) {
 	var schedule entity.DoctorSchedule
-	err := db.WithContext(ctx).Preload("Doctor").Preload("Doctor.User").Where("id = ?", id).First(&schedule).Error
+	err := db.Preload("Doctor").Preload("Doctor.User").Where("id = ?", id).First(&schedule).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -33,28 +32,30 @@ func (r *doctorScheduleRepository) FindByID(ctx context.Context, db *gorm.DB, id
 	return &schedule, nil
 }
 
-func (r *doctorScheduleRepository) FindByDoctorID(ctx context.Context, db *gorm.DB, doctorID uuid.UUID) ([]entity.DoctorSchedule, error) {
+func (r *doctorScheduleRepository) FindByDoctorID(db *gorm.DB, doctorID uuid.UUID) ([]entity.DoctorSchedule, error) {
 	var schedules []entity.DoctorSchedule
-	err := db.WithContext(ctx).Where("doctor_id = ?", doctorID).Order("schedule_date ASC, start_time ASC").Find(&schedules).Error
+	err := db.Where("doctor_id = ?", doctorID).Order("schedule_date ASC, start_time ASC").Find(&schedules).Error
 	if err != nil {
 		return nil, err
 	}
 	return schedules, nil
 }
 
-func (r *doctorScheduleRepository) FindAll(ctx context.Context, db *gorm.DB) ([]entity.DoctorSchedule, error) {
+func (r *doctorScheduleRepository) FindAll(db *gorm.DB) ([]entity.DoctorSchedule, error) {
 	var schedules []entity.DoctorSchedule
-	err := db.WithContext(ctx).Preload("Doctor").Preload("Doctor.User").Order("schedule_date ASC, start_time ASC").Find(&schedules).Error
+	err := db.Preload("Doctor").Preload("Doctor.User").Order("schedule_date ASC, start_time ASC").Find(&schedules).Error
 	if err != nil {
 		return nil, err
 	}
 	return schedules, nil
 }
 
-func (r *doctorScheduleRepository) Update(ctx context.Context, db *gorm.DB, schedule *entity.DoctorSchedule) error {
-	return db.WithContext(ctx).Save(schedule).Error
+func (r *doctorScheduleRepository) Update(db *gorm.DB, schedule *entity.DoctorSchedule) error {
+	return db.Omit("Doctor", "Bookings").Save(schedule).Error
 }
 
-func (r *doctorScheduleRepository) Delete(ctx context.Context, db *gorm.DB, id int) error {
-	return db.WithContext(ctx).Where("id = ?", id).Delete(&entity.DoctorSchedule{}).Error
+func (r *doctorScheduleRepository) Delete(db *gorm.DB, id int) (int64, error) {
+	affected := db.Where("id = ?", id).Delete(&entity.DoctorSchedule{})
+	return affected.RowsAffected, affected.Error
+
 }

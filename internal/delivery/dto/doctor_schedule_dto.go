@@ -17,10 +17,11 @@ type CreateScheduleRequest struct {
 }
 
 type UpdateScheduleRequest struct {
-	ScheduleDate string `json:"schedule_date" validate:"omitempty"` // Format: YYYY-MM-DD
-	StartTime    string `json:"start_time" validate:"omitempty"`    // Format: HH:MM
-	EndTime      string `json:"end_time" validate:"omitempty"`      // Format: HH:MM
-	TotalQuota   *int   `json:"total_quota" validate:"omitempty,min=1"`
+	DoctorID     uuid.UUID `json:"doctor_id" validate:"omitempty"`
+	ScheduleDate string    `json:"schedule_date" validate:"omitempty"` // Format: YYYY-MM-DD
+	StartTime    string    `json:"start_time" validate:"omitempty"`    // Format: HH:MM
+	EndTime      string    `json:"end_time" validate:"omitempty"`      // Format: HH:MM
+	TotalQuota   *int      `json:"total_quota" validate:"omitempty,min=1"`
 }
 
 // Response DTOs

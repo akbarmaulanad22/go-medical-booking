@@ -128,6 +128,8 @@ func (h *DoctorScheduleHandler) UpdateSchedule(w http.ResponseWriter, r *http.Re
 		switch err {
 		case usecase.ErrScheduleNotFound:
 			response.NotFound(w, "Schedule not found")
+		case usecase.ErrDoctorNotFound:
+			response.NotFound(w, "Doctor not found")
 		case usecase.ErrInvalidScheduleDate:
 			response.Error(w, http.StatusBadRequest, "Invalid schedule date format, use YYYY-MM-DD", nil)
 		case usecase.ErrInvalidTimeFormat:

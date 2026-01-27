@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"go-template-clean-architecture/internal/converter"
 	"go-template-clean-architecture/internal/delivery/dto"
 	"go-template-clean-architecture/internal/domain/entity"
 	"go-template-clean-architecture/internal/domain/repository"
@@ -30,48 +31,41 @@ type DoctorScheduleUsecase interface {
 }
 
 type doctorScheduleUsecase struct {
-	db                *gorm.DB
-	log               *logrus.Logger
-	scheduleRepo      repository.DoctorScheduleRepository
-	doctorProfileRepo repository.DoctorProfileRepository
+	db           *gorm.DB
+	log          *logrus.Logger
+	scheduleRepo repository.DoctorScheduleRepository
 }
 
 func NewDoctorScheduleUsecase(
 	db *gorm.DB,
 	log *logrus.Logger,
 	scheduleRepo repository.DoctorScheduleRepository,
-	doctorProfileRepo repository.DoctorProfileRepository,
 ) DoctorScheduleUsecase {
 	return &doctorScheduleUsecase{
-		db:                db,
-		log:               log,
-		scheduleRepo:      scheduleRepo,
-		doctorProfileRepo: doctorProfileRepo,
+		db:           db,
+		log:          log,
+		scheduleRepo: scheduleRepo,
 	}
 }
 
 func (u *doctorScheduleUsecase) CreateSchedule(ctx context.Context, req *dto.CreateScheduleRequest) (*dto.ScheduleResponse, error) {
-	// Validate doctor exists
-	doctor, err := u.doctorProfileRepo.FindByUserID(u.db, req.DoctorID)
-	if err != nil {
-		u.log.Warnf("Failed to find doctor: %+v", err)
-		return nil, err
-	}
-	if doctor == nil {
-		return nil, ErrDoctorNotFound
-	}
+	tx := u.db.WithContext(ctx).Begin()
+	defer tx.Rollback()
 
 	// Parse schedule date
 	scheduleDate, err := time.Parse("2006-01-02", req.ScheduleDate)
 	if err != nil {
+		u.log.Warnf("Failed to parse schedule date: %+v", err)
 		return nil, ErrInvalidScheduleDate
 	}
 
 	// Validate time format
 	if _, err := time.Parse("15:04", req.StartTime); err != nil {
+		u.log.Warnf("Failed to parse start time: %+v", err)
 		return nil, ErrInvalidTimeFormat
 	}
 	if _, err := time.Parse("15:04", req.EndTime); err != nil {
+		u.log.Warnf("Failed to parse end time: %+v", err)
 		return nil, ErrInvalidTimeFormat
 	}
 
@@ -84,158 +78,101 @@ func (u *doctorScheduleUsecase) CreateSchedule(ctx context.Context, req *dto.Cre
 		RemainingQuota: req.TotalQuota,
 	}
 
-	if err := u.scheduleRepo.Create(ctx, u.db, schedule); err != nil {
+	if err := u.scheduleRepo.Create(tx, schedule); err != nil {
 		u.log.Warnf("Failed to create schedule: %+v", err)
+		if isForeignKeyError(err, "doctor") {
+			return nil, ErrDoctorNotFound
+		}
 		return nil, err
 	}
 
-	return &dto.ScheduleResponse{
-		ID:             schedule.ID,
-		DoctorID:       schedule.DoctorID,
-		ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-		StartTime:      schedule.StartTime,
-		EndTime:        schedule.EndTime,
-		TotalQuota:     schedule.TotalQuota,
-		RemainingQuota: schedule.RemainingQuota,
-		CreatedAt:      schedule.CreatedAt,
-		UpdatedAt:      schedule.UpdatedAt,
-	}, nil
+	if err := tx.Commit().Error; err != nil {
+		u.log.Warnf("Failed commit transaction: %+v", err)
+		return nil, err
+	}
+
+	return converter.ScheduleToResponse(schedule), nil
 }
 
 func (u *doctorScheduleUsecase) GetSchedule(ctx context.Context, scheduleID int) (*dto.ScheduleResponse, error) {
-	schedule, err := u.scheduleRepo.FindByID(ctx, u.db, scheduleID)
+	schedule, err := u.scheduleRepo.FindByID(u.db, scheduleID)
 	if err != nil {
 		u.log.Warnf("Failed to find schedule: %+v", err)
 		return nil, err
 	}
 	if schedule == nil {
+		u.log.Warnf("Schedule not found")
 		return nil, ErrScheduleNotFound
 	}
 
-	response := &dto.ScheduleResponse{
-		ID:             schedule.ID,
-		DoctorID:       schedule.DoctorID,
-		ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-		StartTime:      schedule.StartTime,
-		EndTime:        schedule.EndTime,
-		TotalQuota:     schedule.TotalQuota,
-		RemainingQuota: schedule.RemainingQuota,
-		CreatedAt:      schedule.CreatedAt,
-		UpdatedAt:      schedule.UpdatedAt,
-	}
-
-	// Include doctor info if available
-	if schedule.Doctor.UserID != uuid.Nil {
-		response.Doctor = &dto.DoctorResponse{
-			ID:             schedule.Doctor.UserID,
-			Email:          schedule.Doctor.User.Email,
-			FullName:       schedule.Doctor.User.FullName,
-			STRNumber:      schedule.Doctor.STRNumber,
-			Specialization: schedule.Doctor.Specialization,
-			Biography:      schedule.Doctor.Biography,
-			IsActive:       schedule.Doctor.User.IsActive,
-		}
-	}
-
-	return response, nil
+	return converter.ScheduleToResponse(schedule), nil
 }
 
 func (u *doctorScheduleUsecase) GetSchedulesByDoctor(ctx context.Context, doctorID uuid.UUID) (*dto.ScheduleListResponse, error) {
-	schedules, err := u.scheduleRepo.FindByDoctorID(ctx, u.db, doctorID)
+	schedules, err := u.scheduleRepo.FindByDoctorID(u.db, doctorID)
 	if err != nil {
 		u.log.Warnf("Failed to find schedules: %+v", err)
 		return nil, err
 	}
 
-	responses := make([]dto.ScheduleResponse, len(schedules))
-	for i, schedule := range schedules {
-		responses[i] = dto.ScheduleResponse{
-			ID:             schedule.ID,
-			DoctorID:       schedule.DoctorID,
-			ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-			StartTime:      schedule.StartTime,
-			EndTime:        schedule.EndTime,
-			TotalQuota:     schedule.TotalQuota,
-			RemainingQuota: schedule.RemainingQuota,
-			CreatedAt:      schedule.CreatedAt,
-			UpdatedAt:      schedule.UpdatedAt,
-		}
-	}
-
 	return &dto.ScheduleListResponse{
-		Schedules: responses,
-		Total:     len(responses),
+		Schedules: converter.SchedulesToResponses(schedules),
+		Total:     len(schedules),
 	}, nil
 }
 
 func (u *doctorScheduleUsecase) GetAllSchedules(ctx context.Context) (*dto.ScheduleListResponse, error) {
-	schedules, err := u.scheduleRepo.FindAll(ctx, u.db)
+	schedules, err := u.scheduleRepo.FindAll(u.db)
 	if err != nil {
 		u.log.Warnf("Failed to find all schedules: %+v", err)
 		return nil, err
 	}
 
-	responses := make([]dto.ScheduleResponse, len(schedules))
-	for i, schedule := range schedules {
-		response := dto.ScheduleResponse{
-			ID:             schedule.ID,
-			DoctorID:       schedule.DoctorID,
-			ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-			StartTime:      schedule.StartTime,
-			EndTime:        schedule.EndTime,
-			TotalQuota:     schedule.TotalQuota,
-			RemainingQuota: schedule.RemainingQuota,
-			CreatedAt:      schedule.CreatedAt,
-			UpdatedAt:      schedule.UpdatedAt,
-		}
-
-		if schedule.Doctor.UserID != uuid.Nil {
-			response.Doctor = &dto.DoctorResponse{
-				ID:             schedule.Doctor.UserID,
-				Email:          schedule.Doctor.User.Email,
-				FullName:       schedule.Doctor.User.FullName,
-				STRNumber:      schedule.Doctor.STRNumber,
-				Specialization: schedule.Doctor.Specialization,
-				Biography:      schedule.Doctor.Biography,
-				IsActive:       schedule.Doctor.User.IsActive,
-			}
-		}
-
-		responses[i] = response
-	}
-
 	return &dto.ScheduleListResponse{
-		Schedules: responses,
-		Total:     len(responses),
+		Schedules: converter.SchedulesToResponses(schedules),
+		Total:     len(schedules),
 	}, nil
 }
 
 func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID int, req *dto.UpdateScheduleRequest) (*dto.ScheduleResponse, error) {
-	schedule, err := u.scheduleRepo.FindByID(ctx, u.db, scheduleID)
+	tx := u.db.WithContext(ctx).Begin()
+	defer tx.Rollback()
+
+	schedule, err := u.scheduleRepo.FindByID(tx, scheduleID)
+
 	if err != nil {
 		u.log.Warnf("Failed to find schedule: %+v", err)
 		return nil, err
 	}
 	if schedule == nil {
+		u.log.Warnf("Schedule not found")
 		return nil, ErrScheduleNotFound
 	}
 
 	// Update fields
+
+	if req.DoctorID != uuid.Nil {
+		schedule.DoctorID = req.DoctorID
+	}
+
 	if req.ScheduleDate != "" {
 		scheduleDate, err := time.Parse("2006-01-02", req.ScheduleDate)
 		if err != nil {
+			u.log.Warnf("Failed to parse schedule date: %+v", err)
 			return nil, ErrInvalidScheduleDate
 		}
 		schedule.ScheduleDate = scheduleDate
 	}
 	if req.StartTime != "" {
 		if _, err := time.Parse("15:04", req.StartTime); err != nil {
+			u.log.Warnf("Failed to parse start time: %+v", err)
 			return nil, ErrInvalidTimeFormat
 		}
 		schedule.StartTime = req.StartTime
 	}
 	if req.EndTime != "" {
 		if _, err := time.Parse("15:04", req.EndTime); err != nil {
+			u.log.Warnf("Failed to parse end time: %+v", err)
 			return nil, ErrInvalidTimeFormat
 		}
 		schedule.EndTime = req.EndTime
@@ -253,36 +190,42 @@ func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID i
 		}
 	}
 
-	if err := u.scheduleRepo.Update(ctx, u.db, schedule); err != nil {
+	if err := u.scheduleRepo.Update(tx, schedule); err != nil {
+
 		u.log.Warnf("Failed to update schedule: %+v", err)
+
+		if isForeignKeyError(err, "doctor") {
+			return nil, ErrDoctorNotFound
+		}
+
 		return nil, err
 	}
 
-	return &dto.ScheduleResponse{
-		ID:             schedule.ID,
-		DoctorID:       schedule.DoctorID,
-		ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-		StartTime:      schedule.StartTime,
-		EndTime:        schedule.EndTime,
-		TotalQuota:     schedule.TotalQuota,
-		RemainingQuota: schedule.RemainingQuota,
-		CreatedAt:      schedule.CreatedAt,
-		UpdatedAt:      schedule.UpdatedAt,
-	}, nil
+	if err := tx.Commit().Error; err != nil {
+		u.log.Warnf("Failed commit transaction: %+v", err)
+		return nil, err
+	}
+
+	return converter.ScheduleToResponse(schedule), nil
 }
 
 func (u *doctorScheduleUsecase) DeleteSchedule(ctx context.Context, scheduleID int) error {
-	schedule, err := u.scheduleRepo.FindByID(ctx, u.db, scheduleID)
+	tx := u.db.WithContext(ctx).Begin()
+	defer tx.Rollback()
+
+	deleted, err := u.scheduleRepo.Delete(tx, scheduleID)
 	if err != nil {
-		u.log.Warnf("Failed to find schedule: %+v", err)
+		u.log.Warnf("Failed to delete schedule: %+v", err)
 		return err
 	}
-	if schedule == nil {
+
+	if deleted == 0 {
+		u.log.Warnf("Schedule not found")
 		return ErrScheduleNotFound
 	}
 
-	if err := u.scheduleRepo.Delete(ctx, u.db, scheduleID); err != nil {
-		u.log.Warnf("Failed to delete schedule: %+v", err)
+	if err := tx.Commit().Error; err != nil {
+		u.log.Warnf("Failed commit transaction: %+v", err)
 		return err
 	}
 
