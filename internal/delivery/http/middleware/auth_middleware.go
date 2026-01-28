@@ -18,6 +18,7 @@ type contextKey string
 const (
 	UserIDKey    contextKey = "user_id"
 	UserEmailKey contextKey = "user_email"
+	RoleIDKey    contextKey = "role_id"
 	TokenIDKey   contextKey = "token_id"
 )
 
@@ -78,6 +79,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// Add user info to context
 		ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 		ctx = context.WithValue(ctx, UserEmailKey, claims.Email)
+		ctx = context.WithValue(ctx, RoleIDKey, claims.RoleID)
 		ctx = context.WithValue(ctx, TokenIDKey, claims.TokenID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -100,4 +102,10 @@ func GetUserEmailFromContext(ctx context.Context) (string, bool) {
 func GetTokenIDFromContext(ctx context.Context) (string, bool) {
 	tokenID, ok := ctx.Value(TokenIDKey).(string)
 	return tokenID, ok
+}
+
+// GetRoleIDFromContext extracts role ID from context
+func GetRoleIDFromContext(ctx context.Context) (int, bool) {
+	roleID, ok := ctx.Value(RoleIDKey).(int)
+	return roleID, ok
 }

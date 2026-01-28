@@ -26,12 +26,14 @@ type TokenResponse struct {
 }
 
 type UserResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Email     string    `json:"email"`
-	FullName  string    `json:"full_name"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             uuid.UUID               `json:"id"`
+	Email          string                  `json:"email"`
+	FullName       string                  `json:"full_name"`
+	Role           string                  `json:"role"`
+	DoctorProfile  *DoctorProfileResponse  `json:"doctor_profile,omitempty"`
+	PatientProfile *PatientProfileResponse `json:"patient_profile,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	UpdatedAt      time.Time               `json:"updated_at"`
 }
 
 // Role-specific Registration Request DTOs

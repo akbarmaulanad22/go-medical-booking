@@ -20,6 +20,7 @@ const (
 type Claims struct {
 	UserID    uuid.UUID `json:"user_id"`
 	Email     string    `json:"email"`
+	RoleID    int       `json:"role_id"`
 	TokenType TokenType `json:"token_type"`
 	TokenID   string    `json:"token_id"`
 	jwt.RegisteredClaims
@@ -33,11 +34,12 @@ func NewJWTService(cfg config.JWTConfig) *JWTService {
 	return &JWTService{config: cfg}
 }
 
-func (s *JWTService) GenerateAccessToken(userID uuid.UUID, email string) (string, string, error) {
+func (s *JWTService) GenerateAccessToken(userID uuid.UUID, email string, roleID int) (string, string, error) {
 	tokenID := uuid.New().String()
 	claims := Claims{
 		UserID:    userID,
 		Email:     email,
+		RoleID:    roleID,
 		TokenType: AccessToken,
 		TokenID:   tokenID,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -56,11 +58,12 @@ func (s *JWTService) GenerateAccessToken(userID uuid.UUID, email string) (string
 	return signedToken, tokenID, nil
 }
 
-func (s *JWTService) GenerateRefreshToken(userID uuid.UUID, email string) (string, string, error) {
+func (s *JWTService) GenerateRefreshToken(userID uuid.UUID, email string, roleID int) (string, string, error) {
 	tokenID := uuid.New().String()
 	claims := Claims{
 		UserID:    userID,
 		Email:     email,
+		RoleID:    roleID,
 		TokenType: RefreshToken,
 		TokenID:   tokenID,
 		RegisteredClaims: jwt.RegisteredClaims{

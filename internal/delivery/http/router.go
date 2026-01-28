@@ -55,10 +55,10 @@ func (r *Router) Setup() *mux.Router {
 	authProtected.HandleFunc("/logout", r.authHandler.Logout).Methods(http.MethodPost)
 	authProtected.HandleFunc("/me", r.authHandler.GetCurrentUser).Methods(http.MethodGet)
 
-	// Admin routes (protected)
+	// Admin routes (protected - admin only)
 	admin := api.PathPrefix("/admin").Subrouter()
 	admin.Use(r.authMiddleware.Authenticate)
-	// TODO: Add admin role check middleware
+	admin.Use(middleware.RequireAdmin)
 
 	// Doctor management (admin)
 	admin.HandleFunc("/doctors", r.doctorHandler.CreateDoctor).Methods(http.MethodPost)

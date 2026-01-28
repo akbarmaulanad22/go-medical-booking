@@ -79,3 +79,10 @@ func InternalServerError(w http.ResponseWriter, message string) {
 	}
 	Error(w, http.StatusInternalServerError, message, nil)
 }
+
+func Forbidden(w http.ResponseWriter, message string) {
+	if message == "" {
+		message = "Forbidden"
+	}
+	Error(w, http.StatusForbidden, message, nil)
+}

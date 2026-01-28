@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go-template-clean-architecture/internal/converter"
 	"go-template-clean-architecture/internal/delivery/dto"
 	"go-template-clean-architecture/internal/domain/entity"
 	"go-template-clean-architecture/internal/domain/repository"
@@ -133,14 +134,10 @@ func (u *authUsecase) RegisterPatient(ctx context.Context, req *dto.RegisterPati
 		return nil, err
 	}
 
-	return &dto.UserResponse{
-		ID:        user.ID,
-		Email:     user.Email,
-		FullName:  user.FullName,
-		Role:      entity.RolePatient,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-	}, nil
+	// Attach patient profile for converter
+	user.PatientProfile = patientProfile
+
+	return converter.UserToResponse(user), nil
 }
 
 func (u *authUsecase) RegisterDoctor(ctx context.Context, req *dto.RegisterDoctorRequest) (*dto.UserResponse, error) {
@@ -194,14 +191,10 @@ func (u *authUsecase) RegisterDoctor(ctx context.Context, req *dto.RegisterDocto
 		return nil, err
 	}
 
-	return &dto.UserResponse{
-		ID:        user.ID,
-		Email:     user.Email,
-		FullName:  user.FullName,
-		Role:      entity.RoleDoctor,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-	}, nil
+	// Attach doctor profile for converter
+	user.DoctorProfile = doctorProfile
+
+	return converter.UserToResponse(user), nil
 }
 
 func (u *authUsecase) Login(ctx context.Context, req *dto.LoginRequest) (*dto.TokenResponse, error) {
@@ -218,13 +211,13 @@ func (u *authUsecase) Login(ctx context.Context, req *dto.LoginRequest) (*dto.To
 	}
 
 	// Generate tokens
-	accessToken, accessTokenID, err := u.jwtService.GenerateAccessToken(user.ID, user.Email)
+	accessToken, accessTokenID, err := u.jwtService.GenerateAccessToken(user.ID, user.Email, user.RoleID)
 	if err != nil {
 		u.log.Warnf("Failed to generate access token: %+v", err)
 		return nil, err
 	}
 
-	refreshToken, refreshTokenID, err := u.jwtService.GenerateRefreshToken(user.ID, user.Email)
+	refreshToken, refreshTokenID, err := u.jwtService.GenerateRefreshToken(user.ID, user.Email, user.RoleID)
 	if err != nil {
 		u.log.Warnf("Failed to generate refresh token: %+v", err)
 		return nil, err
@@ -314,13 +307,13 @@ func (u *authUsecase) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 	}
 
 	// Generate new tokens
-	accessToken, accessTokenID, err := u.jwtService.GenerateAccessToken(claims.UserID, claims.Email)
+	accessToken, accessTokenID, err := u.jwtService.GenerateAccessToken(claims.UserID, claims.Email, claims.RoleID)
 	if err != nil {
 		u.log.Warnf("Failed to generate access token: %+v", err)
 		return nil, err
 	}
 
-	refreshToken, refreshTokenID, err := u.jwtService.GenerateRefreshToken(claims.UserID, claims.Email)
+	refreshToken, refreshTokenID, err := u.jwtService.GenerateRefreshToken(claims.UserID, claims.Email, claims.RoleID)
 	if err != nil {
 		u.log.Warnf("Failed to generate refresh token: %+v", err)
 		return nil, err
@@ -357,13 +350,7 @@ func (u *authUsecase) GetCurrentUser(ctx context.Context, userID uuid.UUID) (*dt
 		return nil, ErrUserNotFound
 	}
 
-	return &dto.UserResponse{
-		ID:        user.ID,
-		Email:     user.Email,
-		FullName:  user.FullName,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-	}, nil
+	return converter.UserToResponse(user), nil
 }
 
 // Helper function to check if token is valid in Redis

@@ -26,8 +26,14 @@ func (r *userRepository) FindByEmail(db *gorm.DB, email string) (*entity.User, e
 
 func (r *userRepository) FindByID(db *gorm.DB, id uuid.UUID) (*entity.User, error) {
 	var user entity.User
-	err := db.Where("id = ?", id).First(&user).Error
-	return &user, err
+	err := db.Preload("Role").Preload("DoctorProfile").Preload("PatientProfile").Where("id = ?", id).First(&user).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
 }
 
 func (r *userRepository) Update(db *gorm.DB, user *entity.User) error {

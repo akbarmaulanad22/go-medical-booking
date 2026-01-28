@@ -41,3 +41,10 @@ type DoctorListResponse struct {
 	Doctors []DoctorResponse `json:"doctors"`
 	Total   int              `json:"total"`
 }
+
+// DoctorProfileResponse represents doctor profile data embedded in UserResponse
+type DoctorProfileResponse struct {
+	STRNumber      string `json:"str_number"`
+	Specialization string `json:"specialization"`
+	Biography      string `json:"biography,omitempty"`
+}
