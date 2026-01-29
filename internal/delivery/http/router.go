@@ -52,6 +52,13 @@ func (r *Router) Setup() *mux.Router {
 	auth.HandleFunc("/login", r.authHandler.Login).Methods(http.MethodPost)
 	auth.HandleFunc("/refresh-token", r.authHandler.RefreshToken).Methods(http.MethodPost)
 
+	// Public routes
+	public := api.PathPrefix("/").Subrouter()
+	public.HandleFunc("/doctors", r.doctorHandler.GetAllDoctors).Methods(http.MethodGet)
+	// public.HandleFunc("/doctors/{id}", r.doctorHandler.GetDoctor).Methods(http.MethodGet)
+	public.HandleFunc("/schedules", r.doctorScheduleHandler.GetAllSchedules).Methods(http.MethodGet)
+	// public.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.GetSchedule).Methods(http.MethodGet)
+
 	// Auth routes (protected)
 	authProtected := api.PathPrefix("/auth").Subrouter()
 	authProtected.Use(r.authMiddleware.Authenticate)
