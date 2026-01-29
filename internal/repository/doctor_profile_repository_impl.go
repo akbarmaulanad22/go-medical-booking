@@ -41,7 +41,7 @@ func (r *doctorProfileRepository) FindAll(db *gorm.DB) ([]entity.DoctorProfile, 
 }
 
 func (r *doctorProfileRepository) Update(db *gorm.DB, profile *entity.DoctorProfile) error {
-	return db.Save(profile).Error
+	return db.Session(&gorm.Session{FullSaveAssociations: true}).Save(profile).Error
 }
 
 func (r *doctorProfileRepository) Delete(db *gorm.DB, doctorID uuid.UUID) error {

@@ -6,8 +6,10 @@ import (
 
 	"go-template-clean-architecture/internal/converter"
 	"go-template-clean-architecture/internal/delivery/dto"
+	"go-template-clean-architecture/internal/delivery/http/middleware"
 	"go-template-clean-architecture/internal/domain/entity"
 	"go-template-clean-architecture/internal/domain/repository"
+	"go-template-clean-architecture/internal/service"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -35,6 +37,7 @@ type doctorProfileUsecase struct {
 	log               *logrus.Logger
 	userRepo          repository.UserRepository
 	doctorProfileRepo repository.DoctorProfileRepository
+	auditService      service.AuditService
 }
 
 func NewDoctorProfileUsecase(
@@ -42,12 +45,14 @@ func NewDoctorProfileUsecase(
 	log *logrus.Logger,
 	userRepo repository.UserRepository,
 	doctorProfileRepo repository.DoctorProfileRepository,
+	auditService service.AuditService,
 ) DoctorProfileUsecase {
 	return &doctorProfileUsecase{
 		db:                db,
 		log:               log,
 		userRepo:          userRepo,
 		doctorProfileRepo: doctorProfileRepo,
+		auditService:      auditService,
 	}
 }
 
@@ -86,6 +91,13 @@ func (u *doctorProfileUsecase) CreateDoctor(ctx context.Context, req *dto.Create
 			return nil, ErrDoctorRoleNotFound
 		}
 		return nil, err
+	}
+
+	// Audit log - create doctor
+	userID, _ := middleware.GetUserIDFromContext(ctx)
+	if err := u.auditService.LogCreate(ctx, tx, &userID, entity.AuditActionDoctorCreate, "doctor_profile", doctorProfile.UserID.String(), converter.DoctorProfileToResponse(doctorProfile)); err != nil {
+		u.log.Warnf("Failed to create audit log: %+v", err)
+		// Don't fail the transaction for audit log errors
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -141,6 +153,9 @@ func (u *doctorProfileUsecase) UpdateDoctor(ctx context.Context, userID uuid.UUI
 		return nil, ErrDoctorNotFound
 	}
 
+	// Capture old value for audit
+	oldValue := converter.DoctorProfileToResponse(profile)
+
 	// set doctor profile & user
 	if req.Email != "" {
 		profile.User.Email = req.Email
@@ -173,6 +188,13 @@ func (u *doctorProfileUsecase) UpdateDoctor(ctx context.Context, userID uuid.UUI
 		return nil, err
 	}
 
+	// Audit log - update doctor
+	newValue := converter.DoctorProfileToResponse(profile)
+	ctxUserID, _ := middleware.GetUserIDFromContext(ctx)
+	if err := u.auditService.LogUpdate(ctx, tx, &ctxUserID, entity.AuditActionDoctorUpdate, "doctor_profile", userID.String(), oldValue, newValue); err != nil {
+		u.log.Warnf("Failed to create audit log: %+v", err)
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		u.log.Warnf("Failed commit transaction: %+v", err)
 		return nil, err
@@ -185,6 +207,17 @@ func (u *doctorProfileUsecase) DeleteDoctor(ctx context.Context, userID uuid.UUI
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
+	// Get doctor profile for audit log before delete
+	profile, err := u.doctorProfileRepo.FindByUserID(tx, userID)
+	if err != nil {
+		u.log.Warnf("Failed to find doctor profile: %+v", err)
+		return err
+	}
+	if profile == nil {
+		return ErrDoctorNotFound
+	}
+	oldValue := converter.DoctorProfileToResponse(profile)
+
 	affectedRows, err := u.userRepo.Delete(tx, userID)
 	if err != nil {
 		u.log.Warnf("Failed delete doctor: %+v", err)
@@ -193,8 +226,13 @@ func (u *doctorProfileUsecase) DeleteDoctor(ctx context.Context, userID uuid.UUI
 
 	if affectedRows == 0 {
 		u.log.Warnf("Failed delete doctor: %+v", "doctor not found")
-
 		return ErrDoctorNotFound
+	}
+
+	// Audit log - delete doctor
+	ctxUserID, _ := middleware.GetUserIDFromContext(ctx)
+	if err := u.auditService.LogDelete(ctx, tx, &ctxUserID, entity.AuditActionDoctorDelete, "doctor_profile", userID.String(), oldValue); err != nil {
+		u.log.Warnf("Failed to create audit log: %+v", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {

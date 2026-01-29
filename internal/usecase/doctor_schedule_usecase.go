@@ -3,12 +3,15 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"go-template-clean-architecture/internal/converter"
 	"go-template-clean-architecture/internal/delivery/dto"
+	"go-template-clean-architecture/internal/delivery/http/middleware"
 	"go-template-clean-architecture/internal/domain/entity"
 	"go-template-clean-architecture/internal/domain/repository"
+	"go-template-clean-architecture/internal/service"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -34,17 +37,20 @@ type doctorScheduleUsecase struct {
 	db           *gorm.DB
 	log          *logrus.Logger
 	scheduleRepo repository.DoctorScheduleRepository
+	auditService service.AuditService
 }
 
 func NewDoctorScheduleUsecase(
 	db *gorm.DB,
 	log *logrus.Logger,
 	scheduleRepo repository.DoctorScheduleRepository,
+	auditService service.AuditService,
 ) DoctorScheduleUsecase {
 	return &doctorScheduleUsecase{
 		db:           db,
 		log:          log,
 		scheduleRepo: scheduleRepo,
+		auditService: auditService,
 	}
 }
 
@@ -84,6 +90,12 @@ func (u *doctorScheduleUsecase) CreateSchedule(ctx context.Context, req *dto.Cre
 			return nil, ErrDoctorNotFound
 		}
 		return nil, err
+	}
+
+	// Audit log - create schedule
+	userID, _ := middleware.GetUserIDFromContext(ctx)
+	if err := u.auditService.LogCreate(ctx, tx, &userID, entity.AuditActionScheduleCreate, "doctor_schedule", strconv.Itoa(schedule.ID), converter.ScheduleToResponse(schedule)); err != nil {
+		u.log.Warnf("Failed to create audit log: %+v", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -149,6 +161,9 @@ func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID i
 		return nil, ErrScheduleNotFound
 	}
 
+	// Capture old value for audit
+	oldValue := converter.ScheduleToResponse(schedule)
+
 	// Update fields
 
 	if req.DoctorID != uuid.Nil {
@@ -201,6 +216,13 @@ func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID i
 		return nil, err
 	}
 
+	// Audit log - update schedule
+	newValue := converter.ScheduleToResponse(schedule)
+	userID, _ := middleware.GetUserIDFromContext(ctx)
+	if err := u.auditService.LogUpdate(ctx, tx, &userID, entity.AuditActionScheduleUpdate, "doctor_schedule", strconv.Itoa(scheduleID), oldValue, newValue); err != nil {
+		u.log.Warnf("Failed to create audit log: %+v", err)
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		u.log.Warnf("Failed commit transaction: %+v", err)
 		return nil, err
@@ -213,6 +235,29 @@ func (u *doctorScheduleUsecase) DeleteSchedule(ctx context.Context, scheduleID i
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
+	// Capture old value for audit
+	// We need to fetch it first if we weren't doing a delete, but DeleteSchedule doesn't fetch first in the original code...
+	// Original code:
+	// deleted, err := u.scheduleRepo.Delete(tx, scheduleID)
+
+	// Wait, if I want to log the deleted item, I MUST fetch it first.
+	// The original code does `u.scheduleRepo.Delete` which returns rows affected.
+	// It does NOT fetch.
+	// So I need to fetch it first.
+
+	schedule, err := u.scheduleRepo.FindByID(tx, scheduleID)
+	if err != nil {
+		u.log.Warnf("Failed to find schedule for delete: %+v", err)
+		// Continue to delete attempt or return error?
+		// If DB error, return error.
+		return err
+	}
+	// If nil, Delete will return 0 rows anyway, but better to handle it.
+	var oldValue *dto.ScheduleResponse
+	if schedule != nil {
+		oldValue = converter.ScheduleToResponse(schedule)
+	}
+
 	deleted, err := u.scheduleRepo.Delete(tx, scheduleID)
 	if err != nil {
 		u.log.Warnf("Failed to delete schedule: %+v", err)
@@ -222,6 +267,14 @@ func (u *doctorScheduleUsecase) DeleteSchedule(ctx context.Context, scheduleID i
 	if deleted == 0 {
 		u.log.Warnf("Schedule not found")
 		return ErrScheduleNotFound
+	}
+
+	// Audit log - delete schedule
+	if oldValue != nil {
+		userID, _ := middleware.GetUserIDFromContext(ctx)
+		if err := u.auditService.LogDelete(ctx, tx, &userID, entity.AuditActionScheduleDelete, "doctor_schedule", strconv.Itoa(scheduleID), oldValue); err != nil {
+			u.log.Warnf("Failed to create audit log: %+v", err)
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {

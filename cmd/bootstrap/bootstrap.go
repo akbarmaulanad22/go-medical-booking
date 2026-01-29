@@ -16,6 +16,7 @@ import (
 	"go-template-clean-architecture/internal/infrastructure/cache"
 	"go-template-clean-architecture/internal/infrastructure/database"
 	"go-template-clean-architecture/internal/repository"
+	"go-template-clean-architecture/internal/service"
 	"go-template-clean-architecture/internal/usecase"
 	"go-template-clean-architecture/pkg/jwt"
 	"go-template-clean-architecture/pkg/validator"
@@ -92,26 +93,32 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 	doctorProfileRepo := repository.NewDoctorProfileRepository()
 	patientProfileRepo := repository.NewPatientProfileRepository()
 	doctorScheduleRepo := repository.NewDoctorScheduleRepository()
+	auditRepo := repository.NewAuditLogRepository()
 
 	// Initialize logger
 	log := logrus.StandardLogger()
 
+	// init service
+	auditService := service.NewAuditService(db, log, auditRepo)
+
 	// Initialize usecases
 	authUsecase := usecase.NewAuthUsecase(db, log, userRepo, roleRepo, doctorProfileRepo, patientProfileRepo, jwtService, redisClient)
-	doctorProfileUsecase := usecase.NewDoctorProfileUsecase(db, log, userRepo, doctorProfileRepo)
-	doctorScheduleUsecase := usecase.NewDoctorScheduleUsecase(db, log, doctorScheduleRepo)
+	doctorProfileUsecase := usecase.NewDoctorProfileUsecase(db, log, userRepo, doctorProfileRepo, auditService)
+	doctorScheduleUsecase := usecase.NewDoctorScheduleUsecase(db, log, doctorScheduleRepo, auditService)
+	auditUsecase := usecase.NewAuditLogUsecase(db, log, auditRepo)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authUsecase, customValidator, jwtService)
 	doctorHandler := handler.NewDoctorHandler(doctorProfileUsecase, customValidator)
 	doctorScheduleHandler := handler.NewDoctorScheduleHandler(doctorScheduleUsecase, customValidator)
+	auditHandler := handler.NewAuditLogHandler(auditUsecase)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, redisClient)
 	corsMiddleware := middleware.NewCORSMiddleware()
 
 	// Initialize router
-	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, authMiddleware, corsMiddleware)
+	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, authMiddleware, corsMiddleware, auditHandler)
 	httpRouter := router.Setup()
 
 	// Create server

@@ -1,6 +1,10 @@
 package entity
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +29,36 @@ func (AuditLog) TableName() string {
 // JSON type for GORM JSONB support
 type JSON map[string]interface{}
 
+// Value returns json value, implement driver.Valuer interface
+func (j JSON) Value() (driver.Value, error) {
+	if len(j) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
+// Scan scan value into Jsonb, implements sql.Scanner interface
+func (j *JSON) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return errors.New(fmt.Sprint("Failed to unmarshal JSONB value:", value))
+	}
+
+	result := map[string]interface{}{}
+	err := json.Unmarshal(bytes, &result)
+	*j = JSON(result)
+	return err
+}
+
 // Common audit actions
 const (
 	AuditActionUserLogin      = "user.login"
@@ -37,4 +71,7 @@ const (
 	AuditActionScheduleUpdate = "schedule.update"
 	AuditActionScheduleDelete = "schedule.delete"
 	AuditActionProfileUpdate  = "profile.update"
+	AuditActionDoctorCreate   = "doctor.create"
+	AuditActionDoctorUpdate   = "doctor.update"
+	AuditActionDoctorDelete   = "doctor.delete"
 )

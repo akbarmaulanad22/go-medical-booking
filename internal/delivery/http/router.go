@@ -16,6 +16,7 @@ type Router struct {
 	doctorScheduleHandler *handler.DoctorScheduleHandler
 	authMiddleware        *middleware.AuthMiddleware
 	corsMiddleware        *middleware.CORSMiddleware
+	auditHandler          *handler.AuditLogHandler
 }
 
 func NewRouter(
@@ -24,6 +25,7 @@ func NewRouter(
 	doctorScheduleHandler *handler.DoctorScheduleHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	corsMiddleware *middleware.CORSMiddleware,
+	auditHandler *handler.AuditLogHandler,
 ) *Router {
 	return &Router{
 		router:                mux.NewRouter(),
@@ -32,6 +34,7 @@ func NewRouter(
 		doctorScheduleHandler: doctorScheduleHandler,
 		authMiddleware:        authMiddleware,
 		corsMiddleware:        corsMiddleware,
+		auditHandler:          auditHandler,
 	}
 }
 
@@ -74,6 +77,10 @@ func (r *Router) Setup() *mux.Router {
 	admin.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.UpdateSchedule).Methods(http.MethodPut)
 	admin.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.DeleteSchedule).Methods(http.MethodDelete)
 	admin.HandleFunc("/doctors/{doctorId}/schedules", r.doctorScheduleHandler.GetSchedulesByDoctor).Methods(http.MethodGet)
+
+	// Audit Log
+	admin.HandleFunc("/audit-logs", r.auditHandler.GetAllAuditLogs).Methods(http.MethodGet)
+	admin.HandleFunc("/audit-logs/{id}", r.auditHandler.GetAuditLog).Methods(http.MethodGet)
 
 	// Add CORS middleware
 	r.router.Use(r.corsMiddleware.Handle)
