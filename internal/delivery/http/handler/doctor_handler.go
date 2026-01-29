@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"go-template-clean-architecture/internal/delivery/dto"
+	"go-template-clean-architecture/internal/delivery/http/middleware"
 	"go-template-clean-architecture/internal/usecase"
 	"go-template-clean-architecture/pkg/response"
 	"go-template-clean-architecture/pkg/validator"
@@ -140,4 +141,39 @@ func (h *DoctorHandler) DeleteDoctor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, http.StatusOK, "Doctor deleted successfully", nil)
+}
+
+func (h *DoctorHandler) UpdateSelfProfile(w http.ResponseWriter, r *http.Request) {
+	// Get user ID from context
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		response.Unauthorized(w, "Unauthorized")
+		return
+	}
+
+	var req dto.DoctorUpdateSelfRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid request body", nil)
+		return
+	}
+
+	if err := h.validator.Validate(&req); err != nil {
+		response.ValidationError(w, h.validator.FormatValidationErrors(err))
+		return
+	}
+
+	doctor, err := h.doctorUsecase.UpdateSelfProfile(r.Context(), userID, &req)
+	if err != nil {
+		switch err {
+		case usecase.ErrDoctorNotFound:
+			response.NotFound(w, "Doctor not found")
+		case usecase.ErrInvalidOldPassword:
+			response.Error(w, http.StatusBadRequest, "Invalid old password", nil)
+		default:
+			response.InternalServerError(w, "Failed to update profile")
+		}
+		return
+	}
+
+	response.Success(w, http.StatusOK, "Profile updated successfully", doctor)
 }

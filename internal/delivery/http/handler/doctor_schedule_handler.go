@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-template-clean-architecture/internal/delivery/dto"
+	"go-template-clean-architecture/internal/delivery/http/middleware"
 	"go-template-clean-architecture/internal/usecase"
 	"go-template-clean-architecture/pkg/response"
 	"go-template-clean-architecture/pkg/validator"
@@ -162,4 +163,21 @@ func (h *DoctorScheduleHandler) DeleteSchedule(w http.ResponseWriter, r *http.Re
 	}
 
 	response.Success(w, http.StatusOK, "Schedule deleted successfully", nil)
+}
+
+func (h *DoctorScheduleHandler) GetMySchedules(w http.ResponseWriter, r *http.Request) {
+	// Get user ID from context
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		response.Unauthorized(w, "Unauthorized")
+		return
+	}
+
+	schedules, err := h.scheduleUsecase.GetSchedulesByDoctor(r.Context(), userID)
+	if err != nil {
+		response.InternalServerError(w, "Failed to get schedules")
+		return
+	}
+
+	response.Success(w, http.StatusOK, "Schedules retrieved successfully", schedules)
 }

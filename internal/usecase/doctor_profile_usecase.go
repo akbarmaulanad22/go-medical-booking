@@ -22,6 +22,7 @@ var (
 	ErrDoctorEmailExists  = errors.New("email already exists")
 	ErrDoctorSTRExists    = errors.New("STR number already exists")
 	ErrDoctorRoleNotFound = errors.New("role not found")
+	ErrInvalidOldPassword = errors.New("invalid old password")
 )
 
 type DoctorProfileUsecase interface {
@@ -29,6 +30,7 @@ type DoctorProfileUsecase interface {
 	GetDoctor(ctx context.Context, doctorID uuid.UUID) (*dto.DoctorResponse, error)
 	GetAllDoctors(ctx context.Context) (*dto.DoctorListResponse, error)
 	UpdateDoctor(ctx context.Context, doctorID uuid.UUID, req *dto.UpdateDoctorRequest) (*dto.DoctorResponse, error)
+	UpdateSelfProfile(ctx context.Context, doctorID uuid.UUID, req *dto.DoctorUpdateSelfRequest) (*dto.DoctorResponse, error)
 	DeleteDoctor(ctx context.Context, doctorID uuid.UUID) error
 }
 
@@ -192,6 +194,71 @@ func (u *doctorProfileUsecase) UpdateDoctor(ctx context.Context, userID uuid.UUI
 	newValue := converter.DoctorProfileToResponse(profile)
 	ctxUserID, _ := middleware.GetUserIDFromContext(ctx)
 	if err := u.auditService.LogUpdate(ctx, tx, &ctxUserID, entity.AuditActionDoctorUpdate, "doctor_profile", userID.String(), oldValue, newValue); err != nil {
+		u.log.Warnf("Failed to create audit log: %+v", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		u.log.Warnf("Failed commit transaction: %+v", err)
+		return nil, err
+	}
+
+	return converter.DoctorProfileToResponse(profile), nil
+}
+
+func (u *doctorProfileUsecase) UpdateSelfProfile(ctx context.Context, userID uuid.UUID, req *dto.DoctorUpdateSelfRequest) (*dto.DoctorResponse, error) {
+	tx := u.db.WithContext(ctx).Begin()
+	defer tx.Rollback()
+
+	// get doctor profile
+	profile, err := u.doctorProfileRepo.FindByUserID(tx, userID)
+	if err != nil {
+		u.log.Warnf("Failed to find doctor profile: %+v", err)
+		return nil, err
+	}
+
+	if profile == nil {
+		u.log.Warnf("Failed to find doctor profile: %+v", "doctor not found")
+		return nil, ErrDoctorNotFound
+	}
+
+	// Capture old value for audit
+	oldValue := converter.DoctorProfileToResponse(profile)
+
+	// Update allowed fields only
+	updated := false
+	if req.Password != "" {
+		// Validate old password
+		if err := bcrypt.CompareHashAndPassword([]byte(profile.User.Password), []byte(req.OldPassword)); err != nil {
+			return nil, ErrInvalidOldPassword
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			u.log.Warnf("Failed to hash password: %+v", err)
+			return nil, err
+		}
+		profile.User.Password = string(hashedPassword)
+		updated = true
+	}
+
+	if req.Biography != "" {
+		profile.Biography = req.Biography
+		updated = true
+	}
+
+	if !updated {
+		return converter.DoctorProfileToResponse(profile), nil
+	}
+
+	// Update profile
+	if err := u.doctorProfileRepo.Update(tx, profile); err != nil {
+		u.log.Warnf("Failed to update doctor profile: %+v", err)
+		return nil, err
+	}
+
+	// Audit log - update doctor self
+	newValue := converter.DoctorProfileToResponse(profile)
+	if err := u.auditService.LogUpdate(ctx, tx, &userID, entity.AuditActionDoctorUpdate, "doctor_profile", userID.String(), oldValue, newValue); err != nil {
 		u.log.Warnf("Failed to create audit log: %+v", err)
 	}
 

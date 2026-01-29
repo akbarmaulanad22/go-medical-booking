@@ -25,6 +25,12 @@ type UpdateDoctorRequest struct {
 	IsActive       *bool  `json:"is_active" validate:"omitempty"`
 }
 
+type DoctorUpdateSelfRequest struct {
+	OldPassword string `json:"old_password" validate:"required_with=Password"`
+	Password    string `json:"password" validate:"omitempty,min=6"`
+	Biography   string `json:"biography" validate:"omitempty"`
+}
+
 // Response DTOs
 
 type DoctorResponse struct {

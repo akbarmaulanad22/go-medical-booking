@@ -82,6 +82,13 @@ func (r *Router) Setup() *mux.Router {
 	admin.HandleFunc("/audit-logs", r.auditHandler.GetAllAuditLogs).Methods(http.MethodGet)
 	admin.HandleFunc("/audit-logs/{id}", r.auditHandler.GetAuditLog).Methods(http.MethodGet)
 
+	// Doctor routes (protected - doctor only)
+	doctor := api.PathPrefix("/doctor").Subrouter()
+	doctor.Use(r.authMiddleware.Authenticate)
+	doctor.Use(middleware.RequireDoctor)
+	doctor.HandleFunc("/schedules", r.doctorScheduleHandler.GetMySchedules).Methods(http.MethodGet)
+	doctor.HandleFunc("/profile", r.doctorHandler.UpdateSelfProfile).Methods(http.MethodPut)
+
 	// Add CORS middleware
 	r.router.Use(r.corsMiddleware.Handle)
 
