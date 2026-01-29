@@ -22,7 +22,7 @@ func (r *doctorScheduleRepository) Create(db *gorm.DB, schedule *entity.DoctorSc
 
 func (r *doctorScheduleRepository) FindByID(db *gorm.DB, id int) (*entity.DoctorSchedule, error) {
 	var schedule entity.DoctorSchedule
-	err := db.Preload("Doctor").Preload("Doctor.User").Where("id = ?", id).First(&schedule).Error
+	err := db.Preload("Doctor.User").Where("id = ?", id).First(&schedule).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -51,7 +51,7 @@ func (r *doctorScheduleRepository) FindAll(db *gorm.DB) ([]entity.DoctorSchedule
 }
 
 func (r *doctorScheduleRepository) Update(db *gorm.DB, schedule *entity.DoctorSchedule) error {
-	return db.Omit("Doctor", "Bookings").Save(schedule).Error
+	return db.Omit("Doctor").Save(schedule).Error
 }
 
 func (r *doctorScheduleRepository) Delete(db *gorm.DB, id int) (int64, error) {
