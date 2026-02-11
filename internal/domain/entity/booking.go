@@ -21,6 +21,7 @@ type Booking struct {
 	PatientID   uuid.UUID     `gorm:"type:uuid;not null;index" json:"patient_id"`
 	ScheduleID  int           `gorm:"not null;index" json:"schedule_id"`
 	BookingCode string        `gorm:"type:varchar(50);uniqueIndex;not null" json:"booking_code"`
+	QueueNumber int           `gorm:"not null;default:0" json:"queue_number"`
 	Status      BookingStatus `gorm:"type:booking_status;not null;default:'pending';index" json:"status"`
 	CreatedAt   time.Time     `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time     `gorm:"autoUpdateTime" json:"updated_at"`

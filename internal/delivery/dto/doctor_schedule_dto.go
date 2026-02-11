@@ -27,16 +27,15 @@ type UpdateScheduleRequest struct {
 // Response DTOs
 
 type ScheduleResponse struct {
-	ID             int             `json:"id"`
-	DoctorID       uuid.UUID       `json:"doctor_id"`
-	Doctor         *DoctorResponse `json:"doctor,omitempty"`
-	ScheduleDate   string          `json:"schedule_date"`
-	StartTime      string          `json:"start_time"`
-	EndTime        string          `json:"end_time"`
-	TotalQuota     int             `json:"total_quota"`
-	RemainingQuota int             `json:"remaining_quota"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID           int             `json:"id"`
+	DoctorID     uuid.UUID       `json:"doctor_id"`
+	Doctor       *DoctorResponse `json:"doctor,omitempty"`
+	ScheduleDate string          `json:"schedule_date"`
+	StartTime    string          `json:"start_time"`
+	EndTime      string          `json:"end_time"`
+	TotalQuota   int             `json:"total_quota"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type ScheduleListResponse struct {

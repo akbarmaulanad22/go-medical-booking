@@ -14,6 +14,7 @@ type Router struct {
 	authHandler           *handler.AuthHandler
 	doctorHandler         *handler.DoctorHandler
 	doctorScheduleHandler *handler.DoctorScheduleHandler
+	bookingHandler        *handler.BookingHandler
 	authMiddleware        *middleware.AuthMiddleware
 	corsMiddleware        *middleware.CORSMiddleware
 	auditHandler          *handler.AuditLogHandler
@@ -23,6 +24,7 @@ func NewRouter(
 	authHandler *handler.AuthHandler,
 	doctorHandler *handler.DoctorHandler,
 	doctorScheduleHandler *handler.DoctorScheduleHandler,
+	bookingHandler *handler.BookingHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	corsMiddleware *middleware.CORSMiddleware,
 	auditHandler *handler.AuditLogHandler,
@@ -32,6 +34,7 @@ func NewRouter(
 		authHandler:           authHandler,
 		doctorHandler:         doctorHandler,
 		doctorScheduleHandler: doctorScheduleHandler,
+		bookingHandler:        bookingHandler,
 		authMiddleware:        authMiddleware,
 		corsMiddleware:        corsMiddleware,
 		auditHandler:          auditHandler,
@@ -95,6 +98,14 @@ func (r *Router) Setup() *mux.Router {
 	doctor.Use(middleware.RequireDoctor)
 	doctor.HandleFunc("/schedules", r.doctorScheduleHandler.GetMySchedules).Methods(http.MethodGet)
 	doctor.HandleFunc("/profile", r.doctorHandler.UpdateSelfProfile).Methods(http.MethodPut)
+
+	// Patient routes (protected - patient only)
+	patient := api.PathPrefix("/patient").Subrouter()
+	patient.Use(r.authMiddleware.Authenticate)
+	patient.Use(middleware.RequirePatient)
+	patient.HandleFunc("/bookings", r.bookingHandler.GetMyBookings).Methods(http.MethodGet)
+	patient.HandleFunc("/bookings", r.bookingHandler.CreateBooking).Methods(http.MethodPost)
+	patient.HandleFunc("/bookings/{id}/cancel", r.bookingHandler.CancelBooking).Methods(http.MethodPut)
 
 	// Add CORS middleware
 	r.router.Use(r.corsMiddleware.Handle)

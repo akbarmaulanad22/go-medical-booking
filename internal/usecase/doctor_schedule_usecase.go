@@ -34,10 +34,11 @@ type DoctorScheduleUsecase interface {
 }
 
 type doctorScheduleUsecase struct {
-	db           *gorm.DB
-	log          *logrus.Logger
-	scheduleRepo repository.DoctorScheduleRepository
-	auditService service.AuditService
+	db               *gorm.DB
+	log              *logrus.Logger
+	scheduleRepo     repository.DoctorScheduleRepository
+	auditService     service.AuditService
+	redisSyncService *service.RedisSyncService
 }
 
 func NewDoctorScheduleUsecase(
@@ -45,15 +46,23 @@ func NewDoctorScheduleUsecase(
 	log *logrus.Logger,
 	scheduleRepo repository.DoctorScheduleRepository,
 	auditService service.AuditService,
+	redisSyncService *service.RedisSyncService,
 ) DoctorScheduleUsecase {
 	return &doctorScheduleUsecase{
-		db:           db,
-		log:          log,
-		scheduleRepo: scheduleRepo,
-		auditService: auditService,
+		db:               db,
+		log:              log,
+		scheduleRepo:     scheduleRepo,
+		auditService:     auditService,
+		redisSyncService: redisSyncService,
 	}
 }
 
+// CreateSchedule creates a new doctor schedule and syncs to Redis SYNCHRONOUSLY.
+//
+// Sync Strategy:
+// - After DB commit, calls SyncScheduleQuota synchronously (no goroutine)
+// - Redis sync failure is logged but does not rollback DB (fail-safe)
+// - Admin reliability > speed, so we wait for Redis response
 func (u *doctorScheduleUsecase) CreateSchedule(ctx context.Context, req *dto.CreateScheduleRequest) (*dto.ScheduleResponse, error) {
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
@@ -76,12 +85,11 @@ func (u *doctorScheduleUsecase) CreateSchedule(ctx context.Context, req *dto.Cre
 	}
 
 	schedule := &entity.DoctorSchedule{
-		DoctorID:       req.DoctorID,
-		ScheduleDate:   scheduleDate,
-		StartTime:      req.StartTime,
-		EndTime:        req.EndTime,
-		TotalQuota:     req.TotalQuota,
-		RemainingQuota: req.TotalQuota,
+		DoctorID:     req.DoctorID,
+		ScheduleDate: scheduleDate,
+		StartTime:    req.StartTime,
+		EndTime:      req.EndTime,
+		TotalQuota:   req.TotalQuota,
 	}
 
 	if err := u.scheduleRepo.Create(tx, schedule); err != nil {
@@ -101,6 +109,18 @@ func (u *doctorScheduleUsecase) CreateSchedule(ctx context.Context, req *dto.Cre
 	if err := tx.Commit().Error; err != nil {
 		u.log.Warnf("Failed commit transaction: %+v", err)
 		return nil, err
+	}
+
+	// SYNCHRONOUS Redis sync - no goroutine
+	// Reliability > Speed for Admin operations
+	syncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := u.redisSyncService.SyncScheduleQuota(syncCtx, schedule.ID, schedule.TotalQuota, schedule.ScheduleDate); err != nil {
+		// Log error but don't fail the request (fail-safe)
+		// Redis will be synced on next startup or manual trigger
+		u.log.Warnf("Redis sync failed for new schedule %d (non-fatal): %+v", schedule.ID, err)
+	} else {
+		u.log.Infof("Schedule %d created and synced to Redis", schedule.ID)
 	}
 
 	return converter.ScheduleToResponse(schedule), nil
@@ -146,12 +166,20 @@ func (u *doctorScheduleUsecase) GetAllSchedules(ctx context.Context) (*dto.Sched
 	}, nil
 }
 
+// UpdateSchedule updates a schedule and syncs to Redis SYNCHRONOUSLY.
+//
+// Delta Strategy for TotalQuota changes:
+// - If TotalQuota changes, calculate delta = NewTotal - OldTotal
+// - Use Redis INCRBY(delta) instead of SET(absoluteValue)
+// - This prevents race condition if user books at exact same millisecond
+//
+// Sync Strategy:
+// - Synchronous (no goroutine) - reliability > speed for Admin
 func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID int, req *dto.UpdateScheduleRequest) (*dto.ScheduleResponse, error) {
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
 	schedule, err := u.scheduleRepo.FindByID(tx, scheduleID)
-
 	if err != nil {
 		u.log.Warnf("Failed to find schedule: %+v", err)
 		return nil, err
@@ -161,11 +189,12 @@ func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID i
 		return nil, ErrScheduleNotFound
 	}
 
-	// Capture old value for audit
+	// Capture old values for audit and delta calculation
 	oldValue := converter.ScheduleToResponse(schedule)
+	oldTotalQuota := schedule.TotalQuota
+	oldScheduleDate := schedule.ScheduleDate
 
 	// Update fields
-
 	if req.DoctorID != uuid.Nil {
 		schedule.DoctorID = req.DoctorID
 	}
@@ -192,27 +221,23 @@ func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID i
 		}
 		schedule.EndTime = req.EndTime
 	}
-	if req.TotalQuota != nil {
-		// Adjust remaining quota proportionally
-		diff := *req.TotalQuota - schedule.TotalQuota
+
+	// Handle TotalQuota change with delta strategy
+	var quotaDelta int
+	quotaChanged := false
+
+	if req.TotalQuota != nil && *req.TotalQuota != oldTotalQuota {
+		quotaDelta = *req.TotalQuota - oldTotalQuota
+		quotaChanged = true
+
 		schedule.TotalQuota = *req.TotalQuota
-		schedule.RemainingQuota += diff
-		if schedule.RemainingQuota < 0 {
-			schedule.RemainingQuota = 0
-		}
-		if schedule.RemainingQuota > schedule.TotalQuota {
-			schedule.RemainingQuota = schedule.TotalQuota
-		}
 	}
 
 	if err := u.scheduleRepo.Update(tx, schedule); err != nil {
-
 		u.log.Warnf("Failed to update schedule: %+v", err)
-
 		if isForeignKeyError(err, "doctor") {
 			return nil, ErrDoctorNotFound
 		}
-
 		return nil, err
 	}
 
@@ -228,31 +253,56 @@ func (u *doctorScheduleUsecase) UpdateSchedule(ctx context.Context, scheduleID i
 		return nil, err
 	}
 
+	// SYNCHRONOUS Redis sync - no goroutine
+	// Use detached context so Redis sync is not cancelled by HTTP request timeout
+	syncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Handle different update scenarios
+	dateChanged := !schedule.ScheduleDate.Equal(oldScheduleDate)
+
+	if dateChanged {
+		// Schedule date changed - delete old keys and create new ones
+		u.log.Infof("Schedule %d date changed, re-syncing Redis keys", scheduleID)
+
+		// Delete old keys (they had TTL based on old date)
+		if err := u.redisSyncService.DeleteScheduleKeys(syncCtx, scheduleID); err != nil {
+			u.log.Warnf("Failed to delete old Redis keys for schedule %d (non-fatal): %+v", scheduleID, err)
+		}
+
+		// Create new keys with new TTL
+		if err := u.redisSyncService.SyncScheduleQuota(syncCtx, scheduleID, schedule.TotalQuota, schedule.ScheduleDate); err != nil {
+			u.log.Warnf("Failed to sync new Redis keys for schedule %d (non-fatal): %+v", scheduleID, err)
+		}
+	} else if quotaChanged {
+		// Only quota changed - use INCRBY delta strategy
+		// This prevents race condition with concurrent bookings
+		if err := u.redisSyncService.UpdateScheduleQuotaDelta(syncCtx, scheduleID, quotaDelta, schedule.ScheduleDate); err != nil {
+			u.log.Warnf("Failed to update Redis quota for schedule %d (non-fatal): %+v", scheduleID, err)
+		} else {
+			u.log.Infof("Schedule %d quota updated by delta %d", scheduleID, quotaDelta)
+		}
+	}
+
 	return converter.ScheduleToResponse(schedule), nil
 }
 
+// DeleteSchedule deletes a schedule and removes Redis keys SYNCHRONOUSLY.
+//
+// Sync Strategy:
+// - After DB commit, calls DeleteScheduleKeys synchronously
+// - Redis cleanup failure is logged but does not fail request (fail-safe)
 func (u *doctorScheduleUsecase) DeleteSchedule(ctx context.Context, scheduleID int) error {
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
-	// Capture old value for audit
-	// We need to fetch it first if we weren't doing a delete, but DeleteSchedule doesn't fetch first in the original code...
-	// Original code:
-	// deleted, err := u.scheduleRepo.Delete(tx, scheduleID)
-
-	// Wait, if I want to log the deleted item, I MUST fetch it first.
-	// The original code does `u.scheduleRepo.Delete` which returns rows affected.
-	// It does NOT fetch.
-	// So I need to fetch it first.
-
+	// Fetch schedule for audit log
 	schedule, err := u.scheduleRepo.FindByID(tx, scheduleID)
 	if err != nil {
 		u.log.Warnf("Failed to find schedule for delete: %+v", err)
-		// Continue to delete attempt or return error?
-		// If DB error, return error.
 		return err
 	}
-	// If nil, Delete will return 0 rows anyway, but better to handle it.
+
 	var oldValue *dto.ScheduleResponse
 	if schedule != nil {
 		oldValue = converter.ScheduleToResponse(schedule)
@@ -280,6 +330,19 @@ func (u *doctorScheduleUsecase) DeleteSchedule(ctx context.Context, scheduleID i
 	if err := tx.Commit().Error; err != nil {
 		u.log.Warnf("Failed commit transaction: %+v", err)
 		return err
+	}
+
+	// SYNCHRONOUS Redis cleanup - no goroutine
+	// Use detached context so Redis cleanup is not cancelled by HTTP request timeout
+	syncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := u.redisSyncService.DeleteScheduleKeys(syncCtx, scheduleID); err != nil {
+		// Log error but don't fail (fail-safe)
+		// Keys will expire via TTL anyway
+		u.log.Warnf("Failed to delete Redis keys for schedule %d (non-fatal): %+v", scheduleID, err)
+	} else {
+		u.log.Infof("Schedule %d deleted and Redis keys removed", scheduleID)
 	}
 
 	return nil

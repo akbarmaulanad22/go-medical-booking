@@ -93,18 +93,26 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 	doctorProfileRepo := repository.NewDoctorProfileRepository()
 	patientProfileRepo := repository.NewPatientProfileRepository()
 	doctorScheduleRepo := repository.NewDoctorScheduleRepository()
+	bookingRepo := repository.NewBookingRepository()
 	auditRepo := repository.NewAuditLogRepository()
 
 	// Initialize logger
 	log := logrus.StandardLogger()
 
-	// init service
+	// Initialize services
 	auditService := service.NewAuditService(db, log, auditRepo)
+	redisSyncService := service.NewRedisSyncService(db, redisClient, log)
+
+	// Re-sync Redis from database on startup (Disaster Recovery)
+	// CRITICAL: Must run BEFORE accepting traffic to avoid race conditions
+	if err := redisSyncService.SyncOnStartup(context.Background()); err != nil {
+		logrus.Warnf("Redis sync on startup failed (non-fatal): %+v", err)
+	}
 
 	// Initialize usecases
 	authUsecase := usecase.NewAuthUsecase(db, log, userRepo, roleRepo, doctorProfileRepo, patientProfileRepo, jwtService, redisClient)
 	doctorProfileUsecase := usecase.NewDoctorProfileUsecase(db, log, userRepo, doctorProfileRepo, auditService)
-	doctorScheduleUsecase := usecase.NewDoctorScheduleUsecase(db, log, doctorScheduleRepo, auditService)
+	doctorScheduleUsecase := usecase.NewDoctorScheduleUsecase(db, log, doctorScheduleRepo, auditService, redisSyncService)
 	auditUsecase := usecase.NewAuditLogUsecase(db, log, auditRepo)
 
 	// Initialize handlers
@@ -113,12 +121,16 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 	doctorScheduleHandler := handler.NewDoctorScheduleHandler(doctorScheduleUsecase, customValidator)
 	auditHandler := handler.NewAuditLogHandler(auditUsecase)
 
+	// Patient booking
+	bookingUsecase := usecase.NewPatientBookingUsecase(db, log, bookingRepo, doctorScheduleRepo, redisSyncService)
+	bookingHandler := handler.NewBookingHandler(bookingUsecase, customValidator)
+
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, redisClient)
 	corsMiddleware := middleware.NewCORSMiddleware()
 
 	// Initialize router
-	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, authMiddleware, corsMiddleware, auditHandler)
+	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, bookingHandler, authMiddleware, corsMiddleware, auditHandler)
 	httpRouter := router.Setup()
 
 	// Create server

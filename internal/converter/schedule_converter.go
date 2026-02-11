@@ -14,15 +14,14 @@ func ScheduleToResponse(schedule *entity.DoctorSchedule) *dto.ScheduleResponse {
 	}
 
 	response := &dto.ScheduleResponse{
-		ID:             schedule.ID,
-		DoctorID:       schedule.DoctorID,
-		ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-		StartTime:      schedule.StartTime,
-		EndTime:        schedule.EndTime,
-		TotalQuota:     schedule.TotalQuota,
-		RemainingQuota: schedule.RemainingQuota,
-		CreatedAt:      schedule.CreatedAt,
-		UpdatedAt:      schedule.UpdatedAt,
+		ID:           schedule.ID,
+		DoctorID:     schedule.DoctorID,
+		ScheduleDate: schedule.ScheduleDate.Format("2006-01-02"),
+		StartTime:    schedule.StartTime,
+		EndTime:      schedule.EndTime,
+		TotalQuota:   schedule.TotalQuota,
+		CreatedAt:    schedule.CreatedAt,
+		UpdatedAt:    schedule.UpdatedAt,
 	}
 
 	// Include doctor info if available
@@ -38,15 +37,14 @@ func SchedulesToResponses(schedules []entity.DoctorSchedule) []dto.ScheduleRespo
 	responses := make([]dto.ScheduleResponse, len(schedules))
 	for i, schedule := range schedules {
 		response := dto.ScheduleResponse{
-			ID:             schedule.ID,
-			DoctorID:       schedule.DoctorID,
-			ScheduleDate:   schedule.ScheduleDate.Format("2006-01-02"),
-			StartTime:      schedule.StartTime,
-			EndTime:        schedule.EndTime,
-			TotalQuota:     schedule.TotalQuota,
-			RemainingQuota: schedule.RemainingQuota,
-			CreatedAt:      schedule.CreatedAt,
-			UpdatedAt:      schedule.UpdatedAt,
+			ID:           schedule.ID,
+			DoctorID:     schedule.DoctorID,
+			ScheduleDate: schedule.ScheduleDate.Format("2006-01-02"),
+			StartTime:    schedule.StartTime,
+			EndTime:      schedule.EndTime,
+			TotalQuota:   schedule.TotalQuota,
+			CreatedAt:    schedule.CreatedAt,
+			UpdatedAt:    schedule.UpdatedAt,
 		}
 
 		// Include doctor info if available
