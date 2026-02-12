@@ -125,12 +125,16 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 	bookingUsecase := usecase.NewPatientBookingUsecase(db, log, bookingRepo, doctorScheduleRepo, redisSyncService)
 	bookingHandler := handler.NewBookingHandler(bookingUsecase, customValidator)
 
+	// Patient profile
+	patientProfileUsecase := usecase.NewPatientProfileUsecase(db, log, userRepo, patientProfileRepo, auditService)
+	patientHandler := handler.NewPatientHandler(patientProfileUsecase, customValidator)
+
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtService, redisClient)
 	corsMiddleware := middleware.NewCORSMiddleware()
 
 	// Initialize router
-	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, bookingHandler, authMiddleware, corsMiddleware, auditHandler)
+	router := deliveryHttp.NewRouter(authHandler, doctorHandler, doctorScheduleHandler, bookingHandler, patientHandler, authMiddleware, corsMiddleware, auditHandler)
 	httpRouter := router.Setup()
 
 	// Create server

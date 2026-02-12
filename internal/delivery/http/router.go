@@ -15,6 +15,7 @@ type Router struct {
 	doctorHandler         *handler.DoctorHandler
 	doctorScheduleHandler *handler.DoctorScheduleHandler
 	bookingHandler        *handler.BookingHandler
+	patientHandler        *handler.PatientHandler
 	authMiddleware        *middleware.AuthMiddleware
 	corsMiddleware        *middleware.CORSMiddleware
 	auditHandler          *handler.AuditLogHandler
@@ -25,6 +26,7 @@ func NewRouter(
 	doctorHandler *handler.DoctorHandler,
 	doctorScheduleHandler *handler.DoctorScheduleHandler,
 	bookingHandler *handler.BookingHandler,
+	patientHandler *handler.PatientHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	corsMiddleware *middleware.CORSMiddleware,
 	auditHandler *handler.AuditLogHandler,
@@ -35,6 +37,7 @@ func NewRouter(
 		doctorHandler:         doctorHandler,
 		doctorScheduleHandler: doctorScheduleHandler,
 		bookingHandler:        bookingHandler,
+		patientHandler:        patientHandler,
 		authMiddleware:        authMiddleware,
 		corsMiddleware:        corsMiddleware,
 		auditHandler:          auditHandler,
@@ -106,6 +109,7 @@ func (r *Router) Setup() *mux.Router {
 	patient.HandleFunc("/bookings", r.bookingHandler.GetMyBookings).Methods(http.MethodGet)
 	patient.HandleFunc("/bookings", r.bookingHandler.CreateBooking).Methods(http.MethodPost)
 	patient.HandleFunc("/bookings/{id}/cancel", r.bookingHandler.CancelBooking).Methods(http.MethodPut)
+	patient.HandleFunc("/profile", r.patientHandler.UpdateSelfProfile).Methods(http.MethodPut)
 
 	// Add CORS middleware
 	r.router.Use(r.corsMiddleware.Handle)
