@@ -88,6 +88,23 @@ func (h *DoctorScheduleHandler) GetAllSchedules(w http.ResponseWriter, r *http.R
 	response.Success(w, http.StatusOK, "Schedules retrieved successfully", schedules)
 }
 
+func (h *DoctorScheduleHandler) GetPublicSchedules(w http.ResponseWriter, r *http.Request) {
+	filter := &dto.PublicScheduleFilter{
+		StartAt:        r.URL.Query().Get("start_at"),
+		EndAt:          r.URL.Query().Get("end_at"),
+		DoctorName:     r.URL.Query().Get("doctor_name"),
+		Specialization: r.URL.Query().Get("specialization"),
+	}
+
+	schedules, err := h.scheduleUsecase.GetPublicSchedules(r.Context(), filter)
+	if err != nil {
+		response.InternalServerError(w, "Failed to get schedules")
+		return
+	}
+
+	response.Success(w, http.StatusOK, "Schedules retrieved successfully", schedules)
+}
+
 func (h *DoctorScheduleHandler) GetSchedulesByDoctor(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	doctorID, err := uuid.Parse(vars["doctorId"])

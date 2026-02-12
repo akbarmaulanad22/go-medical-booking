@@ -42,3 +42,11 @@ type ScheduleListResponse struct {
 	Schedules []ScheduleResponse `json:"schedules"`
 	Total     int                `json:"total"`
 }
+
+// PublicScheduleFilter for query param filtering on public schedules endpoint
+type PublicScheduleFilter struct {
+	StartAt        string `json:"start_at"`       // Format: YYYY-MM-DD
+	EndAt          string `json:"end_at"`         // Format: YYYY-MM-DD
+	DoctorName     string `json:"doctor_name"`    // Filter by doctor name
+	Specialization string `json:"specialization"` // Filter by specialization
+}

@@ -12,6 +12,7 @@ type DoctorScheduleRepository interface {
 	FindByID(db *gorm.DB, id int) (*entity.DoctorSchedule, error)
 	FindByDoctorID(db *gorm.DB, doctorID uuid.UUID) ([]entity.DoctorSchedule, error)
 	FindAll(db *gorm.DB) ([]entity.DoctorSchedule, error)
+	FindAllWithActiveDoctor(db *gorm.DB, filter *entity.ScheduleFilter) ([]entity.DoctorSchedule, error)
 	Update(db *gorm.DB, schedule *entity.DoctorSchedule) error
 	Delete(db *gorm.DB, id int) (int64, error)
 }

@@ -29,6 +29,7 @@ type DoctorScheduleUsecase interface {
 	GetSchedule(ctx context.Context, scheduleID int) (*dto.ScheduleResponse, error)
 	GetSchedulesByDoctor(ctx context.Context, doctorID uuid.UUID) (*dto.ScheduleListResponse, error)
 	GetAllSchedules(ctx context.Context) (*dto.ScheduleListResponse, error)
+	GetPublicSchedules(ctx context.Context, filter *dto.PublicScheduleFilter) (*dto.ScheduleListResponse, error)
 	UpdateSchedule(ctx context.Context, scheduleID int, req *dto.UpdateScheduleRequest) (*dto.ScheduleResponse, error)
 	DeleteSchedule(ctx context.Context, scheduleID int) error
 }
@@ -157,6 +158,32 @@ func (u *doctorScheduleUsecase) GetAllSchedules(ctx context.Context) (*dto.Sched
 	schedules, err := u.scheduleRepo.FindAll(u.db)
 	if err != nil {
 		u.log.Warnf("Failed to find all schedules: %+v", err)
+		return nil, err
+	}
+
+	return &dto.ScheduleListResponse{
+		Schedules: converter.SchedulesToResponses(schedules),
+		Total:     len(schedules),
+	}, nil
+}
+
+// GetPublicSchedules returns schedules only for active doctors.
+// Used by public-facing endpoints to hide schedules from deactivated doctors.
+func (u *doctorScheduleUsecase) GetPublicSchedules(ctx context.Context, filter *dto.PublicScheduleFilter) (*dto.ScheduleListResponse, error) {
+	// Convert DTO filter to entity filter
+	var entityFilter *entity.ScheduleFilter
+	if filter != nil {
+		entityFilter = &entity.ScheduleFilter{
+			StartAt:        filter.StartAt,
+			EndAt:          filter.EndAt,
+			DoctorName:     filter.DoctorName,
+			Specialization: filter.Specialization,
+		}
+	}
+
+	schedules, err := u.scheduleRepo.FindAllWithActiveDoctor(u.db, entityFilter)
+	if err != nil {
+		u.log.Warnf("Failed to find public schedules: %+v", err)
 		return nil, err
 	}
 

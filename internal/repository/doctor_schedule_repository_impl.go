@@ -50,6 +50,40 @@ func (r *doctorScheduleRepository) FindAll(db *gorm.DB) ([]entity.DoctorSchedule
 	return schedules, nil
 }
 
+// FindAllWithActiveDoctor returns schedules only for doctors whose user account is active.
+// Supports optional filters: date range, doctor name, and specialization.
+func (r *doctorScheduleRepository) FindAllWithActiveDoctor(db *gorm.DB, filter *entity.ScheduleFilter) ([]entity.DoctorSchedule, error) {
+	var schedules []entity.DoctorSchedule
+	query := db.
+		Joins("JOIN doctor_profiles ON doctor_profiles.user_id = doctor_schedules.doctor_id").
+		Joins("JOIN users ON users.id = doctor_profiles.user_id").
+		Where("users.is_active = ?", true)
+
+	if filter != nil {
+		if filter.StartAt != "" {
+			query = query.Where("doctor_schedules.schedule_date >= ?", filter.StartAt)
+		}
+		if filter.EndAt != "" {
+			query = query.Where("doctor_schedules.schedule_date <= ?", filter.EndAt)
+		}
+		if filter.DoctorName != "" {
+			query = query.Where("users.full_name ILIKE ?", "%"+filter.DoctorName+"%")
+		}
+		if filter.Specialization != "" {
+			query = query.Where("doctor_profiles.specialization ILIKE ?", "%"+filter.Specialization+"%")
+		}
+	}
+
+	err := query.
+		Preload("Doctor").Preload("Doctor.User").
+		Order("schedule_date ASC, start_time ASC").
+		Find(&schedules).Error
+	if err != nil {
+		return nil, err
+	}
+	return schedules, nil
+}
+
 func (r *doctorScheduleRepository) Update(db *gorm.DB, schedule *entity.DoctorSchedule) error {
 	return db.Omit("Doctor").Save(schedule).Error
 }

@@ -62,7 +62,7 @@ func (r *Router) Setup() *mux.Router {
 	public := api.PathPrefix("/").Subrouter()
 	public.HandleFunc("/doctors", r.doctorHandler.GetAllDoctors).Methods(http.MethodGet)
 	// public.HandleFunc("/doctors/{id}", r.doctorHandler.GetDoctor).Methods(http.MethodGet)
-	public.HandleFunc("/schedules", r.doctorScheduleHandler.GetAllSchedules).Methods(http.MethodGet)
+	public.HandleFunc("/schedules", r.doctorScheduleHandler.GetPublicSchedules).Methods(http.MethodGet)
 	// public.HandleFunc("/schedules/{id}", r.doctorScheduleHandler.GetSchedule).Methods(http.MethodGet)
 
 	// Auth routes (protected)
