@@ -143,11 +143,18 @@ func (u *patientBookingUsecase) CreateBooking(ctx context.Context, req *dto.Crea
 	if err := u.bookingRepo.Create(u.db.WithContext(ctx), booking); err != nil {
 		u.log.Errorf("Failed to insert booking to DB, compensating Redis: %+v", err)
 
-		// Step 6: COMPENSATE - restore Redis quota since DB insert failed
-		syncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if restoreErr := u.redisSyncService.RestoreQuota(syncCtx, req.ScheduleID); restoreErr != nil {
+		// COMPENSATE - restore Redis quota since DB insert failed
+		syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		restoreErr := u.redisSyncService.RestoreQuota(syncCtx, req.ScheduleID)
+		syncCancel() // explicit cancel instead of defer (Fix #2)
+		if restoreErr != nil {
 			u.log.Errorf("CRITICAL: Failed to restore Redis quota after DB failure for schedule %d: %+v", req.ScheduleID, restoreErr)
+		}
+
+		// Handle unique constraint violation (race condition safety net from DB)
+		// Uses PostgreSQL error code 23505 (unique_violation) — migration-proof
+		if isDuplicateKeyError(err, "booking") {
+			return nil, ErrAlreadyBooked
 		}
 
 		return nil, err
@@ -167,18 +174,21 @@ func (u *patientBookingUsecase) CreateBooking(ctx context.Context, req *dto.Crea
 
 // CancelBooking cancels a booking and restores the schedule slot.
 //
+// ATOMIC FIX: Uses UPDATE WHERE status != 'cancelled' + row count check.
+// If 0 rows affected → booking was already cancelled (prevents double-cancel quota leak).
+//
 // Flow:
 // 1. Find booking and verify ownership
-// 2. Verify not already cancelled
-// 3. Update status to cancelled in DB
-// 4. RestoreQuota in Redis (does NOT decrement queue number)
+// 2. Atomic DB update: SET cancelled WHERE status != cancelled (returns rows affected)
+// 3. If affected == 0 → already cancelled, skip Redis restore
+// 4. If affected == 1 → RestoreQuota in Redis (queue number NOT decremented)
 func (u *patientBookingUsecase) CancelBooking(ctx context.Context, bookingID uuid.UUID) error {
 	userID, ok := middleware.GetUserIDFromContext(ctx)
 	if !ok {
 		return errors.New("user not found in context")
 	}
 
-	// Step 1: Find booking
+	// Step 1: Find booking and verify ownership
 	booking, err := u.bookingRepo.FindByID(u.db.WithContext(ctx), bookingID)
 	if err != nil {
 		u.log.Warnf("Failed to find booking %s: %+v", bookingID, err)
@@ -188,26 +198,28 @@ func (u *patientBookingUsecase) CancelBooking(ctx context.Context, bookingID uui
 		return ErrBookingNotFound
 	}
 
-	// Verify ownership
 	if booking.PatientID != userID {
 		return ErrBookingNotOwned
 	}
 
-	// Step 2: Check not already cancelled
-	if booking.IsCancelled() {
-		return ErrBookingAlreadyCancelled
-	}
-
-	// Step 3: Update status to cancelled in DB
-	if err := u.bookingRepo.UpdateStatus(u.db.WithContext(ctx), bookingID, entity.BookingStatusCancelled); err != nil {
+	// Step 2: Atomic cancel — UPDATE WHERE status != 'cancelled'
+	// Returns rows affected: 1 = success, 0 = already cancelled
+	affected, err := u.bookingRepo.CancelBooking(u.db.WithContext(ctx), bookingID)
+	if err != nil {
 		u.log.Warnf("Failed to cancel booking %s: %+v", bookingID, err)
 		return err
 	}
 
-	// Step 4: Restore quota in Redis (queue number NOT decremented)
-	syncCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := u.redisSyncService.RestoreQuota(syncCtx, booking.ScheduleID); err != nil {
+	// If 0 rows affected, booking was already cancelled — do NOT restore quota
+	if affected == 0 {
+		return ErrBookingAlreadyCancelled
+	}
+
+	// Step 3: Restore quota in Redis (queue number NOT decremented)
+	syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = u.redisSyncService.RestoreQuota(syncCtx, booking.ScheduleID)
+	syncCancel() // explicit cancel instead of defer (Fix #2)
+	if err != nil {
 		// Log but don't fail - Redis will be re-synced on next startup
 		u.log.Warnf("Failed to restore Redis quota for schedule %d (non-fatal): %+v", booking.ScheduleID, err)
 	}

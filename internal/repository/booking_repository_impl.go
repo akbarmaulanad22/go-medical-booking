@@ -44,8 +44,13 @@ func (r *bookingRepository) FindByPatientID(db *gorm.DB, patientID uuid.UUID) ([
 	return bookings, nil
 }
 
-func (r *bookingRepository) UpdateStatus(db *gorm.DB, id uuid.UUID, status entity.BookingStatus) error {
-	return db.Model(&entity.Booking{}).Where("id = ?", id).Update("status", status).Error
+// CancelBooking atomically cancels a booking ONLY if it's not already cancelled.
+// Returns affected rows: 1 = success, 0 = already cancelled (prevents double-cancel race).
+func (r *bookingRepository) CancelBooking(db *gorm.DB, id uuid.UUID) (int64, error) {
+	result := db.Model(&entity.Booking{}).
+		Where("id = ? AND status != ?", id, entity.BookingStatusCancelled).
+		Update("status", entity.BookingStatusCancelled)
+	return result.RowsAffected, result.Error
 }
 
 func (r *bookingRepository) FindByPatientAndSchedule(db *gorm.DB, patientID uuid.UUID, scheduleID int) (*entity.Booking, error) {

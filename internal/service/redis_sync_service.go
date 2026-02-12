@@ -22,6 +22,24 @@ import (
 // ErrQuotaFull is returned when schedule slot is fully booked
 var ErrQuotaFull = errors.New("schedule quota is full")
 
+// decrQuotaIncrQueueScript is a package-level Lua script.
+// Redis Go client automatically uses EVALSHA (send SHA hash only) after the first call,
+// instead of EVAL (send full script text every time). This is significant for high-concurrency.
+//
+// Logic:
+// 1. DECR quota key
+// 2. If result < 0 → INCR back (rollback) and return -1 (quota full)
+// 3. If result >= 0 → INCR queue key and return queue number
+var decrQuotaIncrQueueScript = redis.NewScript(`
+	local remaining = redis.call('DECR', KEYS[1])
+	if remaining < 0 then
+		redis.call('INCR', KEYS[1])
+		return -1
+	end
+	local queue = redis.call('INCR', KEYS[2])
+	return queue
+`)
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -384,54 +402,33 @@ func (s *RedisSyncService) DeleteScheduleKeys(ctx context.Context, scheduleID in
 
 // DecrQuotaAndIncrQueue atomically reserves a booking slot and gets queue number.
 //
-// HIGH CONCURRENCY STRATEGY:
-// 1. DECR quota key → if result < 0, slot is full, INCR back and return ErrQuotaFull
-// 2. INCR queue key → get monotonically increasing queue number
+// HIGH CONCURRENCY STRATEGY — Lua Script:
+// Executes DECR quota + INCR queue as a SINGLE atomic operation inside Redis.
+// No failure window between the two steps — either both succeed or neither applies.
 //
-// This approach allows thousands of concurrent users to compete on Redis (in-memory, ~µs)
-// instead of PostgreSQL row locks, preventing database bottlenecks.
+// NO MUTEX NEEDED: Lua scripts execute atomically in Redis (single-threaded).
+// An in-app mutex would serialize all requests per schedule, becoming a bottleneck.
 //
 // Called by: CreateBooking usecase
 //
 // Returns: queue number (1-based), or error
 func (s *RedisSyncService) DecrQuotaAndIncrQueue(ctx context.Context, scheduleID int) (int, error) {
-	// Acquire per-schedule mutex
-	mt := s.getScheduleMutex(scheduleID)
-	mt.mu.Lock()
-	defer mt.mu.Unlock()
-
 	quotaKey := fmt.Sprintf("%s%d", RedisQuotaKeyPrefix, scheduleID)
 	queueKey := fmt.Sprintf("%s%d", RedisQueueKeyPrefix, scheduleID)
 
-	// Step 1: Atomically decrement quota
-	remaining, err := s.redisClient.Decr(ctx, quotaKey).Result()
+	// Uses package-level decrQuotaIncrQueueScript for EVALSHA optimization
+	result, err := decrQuotaIncrQueueScript.Run(ctx, s.redisClient, []string{quotaKey, queueKey}).Int()
 	if err != nil {
-		s.log.Warnf("Failed to DECR quota for schedule %d: %+v", scheduleID, err)
-		return 0, fmt.Errorf("decr quota for schedule %d: %w", scheduleID, err)
+		s.log.Warnf("Failed Lua script DecrQuotaAndIncrQueue for schedule %d: %+v", scheduleID, err)
+		return 0, fmt.Errorf("lua decrquota_incrqueue for schedule %d: %w", scheduleID, err)
 	}
 
-	// If quota went negative, slot is full - rollback
-	if remaining < 0 {
-		// Compensate: INCR back to restore
-		if err := s.redisClient.Incr(ctx, quotaKey).Err(); err != nil {
-			s.log.Errorf("CRITICAL: Failed to rollback quota INCR for schedule %d: %+v", scheduleID, err)
-		}
+	if result == -1 {
 		return 0, ErrQuotaFull
 	}
 
-	// Step 2: Atomically increment queue number
-	queueNumber, err := s.redisClient.Incr(ctx, queueKey).Result()
-	if err != nil {
-		// Compensate: restore the quota since we can't get queue number
-		s.log.Errorf("Failed to INCR queue for schedule %d, restoring quota: %+v", scheduleID, err)
-		if incrErr := s.redisClient.Incr(ctx, quotaKey).Err(); incrErr != nil {
-			s.log.Errorf("CRITICAL: Failed to restore quota after queue INCR failure for schedule %d: %+v", scheduleID, incrErr)
-		}
-		return 0, fmt.Errorf("incr queue for schedule %d: %w", scheduleID, err)
-	}
-
-	s.log.Debugf("Reserved slot for schedule %d: remaining_quota=%d, queue_number=%d", scheduleID, remaining, queueNumber)
-	return int(queueNumber), nil
+	s.log.Debugf("Reserved slot for schedule %d: queue_number=%d", scheduleID, result)
+	return result, nil
 }
 
 // RestoreQuota restores a booking slot when a booking is cancelled.
