@@ -11,6 +11,7 @@ import (
 	"go-template-clean-architecture/internal/delivery/dto"
 	"go-template-clean-architecture/internal/domain/entity"
 	"go-template-clean-architecture/internal/domain/repository"
+	"go-template-clean-architecture/internal/service"
 	"go-template-clean-architecture/pkg/jwt"
 
 	"github.com/google/uuid"
@@ -31,11 +32,34 @@ var (
 	ErrNIKAlreadyExists   = errors.New("NIK already exists")
 	ErrSTRAlreadyExists   = errors.New("STR number already exists")
 	ErrInvalidDateFormat  = errors.New("invalid date format, use YYYY-MM-DD")
+	ErrAccountLocked      = errors.New("account temporarily locked, try again later")
 )
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+const (
+	maxLoginAttempts    = 5
+	loginLockoutPeriod  = 3 * time.Minute
+	loginAttemptsPrefix = "login_attempts:"
+)
+
+// Lua script: atomically INCR attempt count and set TTL on first attempt
+var loginRateLimitScript = redis.NewScript(`
+	local current = redis.call('INCR', KEYS[1])
+	if current == 1 then
+		redis.call('EXPIRE', KEYS[1], ARGV[1])
+	end
+	return current
+`)
+
+// =============================================================================
+// Interface & Struct
+// =============================================================================
+
 type AuthUsecase interface {
-	RegisterPatient(ctx context.Context, req *dto.RegisterPatientRequest) (*dto.UserResponse, error)
-	RegisterDoctor(ctx context.Context, req *dto.RegisterDoctorRequest) (*dto.UserResponse, error)
+	Register(ctx context.Context, user *entity.User) (*dto.UserResponse, error)
 	Login(ctx context.Context, req *dto.LoginRequest) (*dto.TokenResponse, error)
 	Logout(ctx context.Context, accessTokenID, refreshTokenID string) error
 	RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.TokenResponse, error)
@@ -43,14 +67,13 @@ type AuthUsecase interface {
 }
 
 type authUsecase struct {
-	db                 *gorm.DB
-	log                *logrus.Logger
-	userRepo           repository.UserRepository
-	roleRepo           repository.RoleRepository
-	doctorProfileRepo  repository.DoctorProfileRepository
-	patientProfileRepo repository.PatientProfileRepository
-	jwtService         *jwt.JWTService
-	redisClient        *redis.Client
+	db           *gorm.DB
+	log          *logrus.Logger
+	userRepo     repository.UserRepository
+	roleRepo     repository.RoleRepository
+	jwtService   *jwt.JWTService
+	redisClient  *redis.Client
+	auditService service.AuditService
 }
 
 func NewAuthUsecase(
@@ -58,184 +81,169 @@ func NewAuthUsecase(
 	log *logrus.Logger,
 	userRepo repository.UserRepository,
 	roleRepo repository.RoleRepository,
-	doctorProfileRepo repository.DoctorProfileRepository,
-	patientProfileRepo repository.PatientProfileRepository,
 	jwtService *jwt.JWTService,
 	redisClient *redis.Client,
+	auditService service.AuditService,
 ) AuthUsecase {
 	return &authUsecase{
-		db:                 db,
-		log:                log,
-		userRepo:           userRepo,
-		roleRepo:           roleRepo,
-		doctorProfileRepo:  doctorProfileRepo,
-		patientProfileRepo: patientProfileRepo,
-		jwtService:         jwtService,
-		redisClient:        redisClient,
+		db:           db,
+		log:          log,
+		userRepo:     userRepo,
+		roleRepo:     roleRepo,
+		jwtService:   jwtService,
+		redisClient:  redisClient,
+		auditService: auditService,
 	}
 }
 
-func (u *authUsecase) RegisterPatient(ctx context.Context, req *dto.RegisterPatientRequest) (*dto.UserResponse, error) {
+// =============================================================================
+// Register — unified for all roles
+// =============================================================================
+
+// Register creates a new user with any associated profile (PatientProfile / DoctorProfile).
+// The handler is responsible for building the entity.User with the correct RoleID and
+// profile relation attached. Password must be plaintext — this function hashes it.
+//
+// GORM auto-creates nested associations when the parent struct has them populated,
+// so we only need a single db.Create(user) call.
+func (u *authUsecase) Register(ctx context.Context, user *entity.User) (*dto.UserResponse, error) {
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		go u.log.Warnf("Failed to hash password: %+v", err)
+		return nil, err
+	}
+	user.Password = string(hashedPassword)
+
+	// Create user + associations in a transaction
 	tx := u.db.WithContext(ctx).Begin()
 	defer tx.Rollback()
 
-	// Parse date of birth
-	dob, err := time.Parse("2006-01-02", req.DateOfBirth)
-	if err != nil {
-		return nil, ErrInvalidDateFormat
-	}
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		u.log.Warnf("Failed to hash password: %+v", err)
-		return nil, err
-	}
-
-	// Create user
-	user := &entity.User{
-		Email:    req.Email,
-		Password: string(hashedPassword),
-		FullName: req.FullName,
-		RoleID:   entity.RoleIDPatient,
-	}
-
 	if err := u.userRepo.Create(tx, user); err != nil {
+		go u.log.Warnf("Failed to create user: %+v", err)
 		if isDuplicateKeyError(err, "email") {
 			return nil, ErrEmailAlreadyExists
 		}
-		if isForeignKeyError(err, "role") {
-			return nil, ErrRoleNotFound
-		}
-		u.log.Warnf("Failed to create user: %+v", err)
-		return nil, err
-	}
-
-	// Create patient profile
-	patientProfile := &entity.PatientProfile{
-		UserID:      user.ID,
-		NIK:         req.NIK,
-		PhoneNumber: req.PhoneNumber,
-		DateOfBirth: dob,
-		Gender:      req.Gender,
-		Address:     req.Address,
-	}
-
-	if err := u.patientProfileRepo.Create(ctx, tx, patientProfile); err != nil {
 		if isDuplicateKeyError(err, "nik") {
 			return nil, ErrNIKAlreadyExists
 		}
-		u.log.Warnf("Failed to create patient profile: %+v", err)
-		return nil, err
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		u.log.Warnf("Failed commit transaction: %+v", err)
-		return nil, err
-	}
-
-	// Attach patient profile for converter
-	user.PatientProfile = patientProfile
-
-	return converter.UserToResponse(user), nil
-}
-
-func (u *authUsecase) RegisterDoctor(ctx context.Context, req *dto.RegisterDoctorRequest) (*dto.UserResponse, error) {
-	tx := u.db.WithContext(ctx).Begin()
-	defer tx.Rollback()
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		u.log.Warnf("Failed to hash password: %+v", err)
-		return nil, err
-	}
-
-	// Create user
-	user := &entity.User{
-		Email:    req.Email,
-		Password: string(hashedPassword),
-		FullName: req.FullName,
-		RoleID:   entity.RoleIDDoctor,
-	}
-
-	if err := u.userRepo.Create(tx, user); err != nil {
-		if isDuplicateKeyError(err, "email") {
-			return nil, ErrEmailAlreadyExists
+		if isDuplicateKeyError(err, "str_number") {
+			return nil, ErrSTRAlreadyExists
 		}
 		if isForeignKeyError(err, "role") {
 			return nil, ErrRoleNotFound
 		}
-		u.log.Warnf("Failed to create user: %+v", err)
-		return nil, err
-	}
-
-	// Create doctor profile
-	doctorProfile := &entity.DoctorProfile{
-		UserID:         user.ID,
-		STRNumber:      req.STRNumber,
-		Specialization: req.Specialization,
-		Biography:      req.Biography,
-	}
-
-	if err := u.doctorProfileRepo.Create(tx, doctorProfile); err != nil {
-		if isDuplicateKeyError(err, "str_number") {
-			return nil, ErrSTRAlreadyExists
-		}
-		u.log.Warnf("Failed to create doctor profile: %+v", err)
 		return nil, err
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		u.log.Warnf("Failed commit transaction: %+v", err)
+		go u.log.Warnf("Failed to commit transaction: %+v", err)
 		return nil, err
 	}
 
-	// Attach doctor profile for converter
-	user.DoctorProfile = doctorProfile
+	// Non-blocking audit log: register success
+	go func() {
+		ctx := context.Background()
+		if err := u.auditService.LogCreate(ctx, u.db, &user.ID, entity.AuditActionUserRegister, "user", user.ID.String(), entity.JSON{
+			"email":   user.Email,
+			"role_id": user.RoleID,
+		}); err != nil {
+			u.log.Warnf("Failed to log register audit: %+v", err)
+		}
+	}()
 
 	return converter.UserToResponse(user), nil
 }
 
+// =============================================================================
+// Login — with Redis rate limiting
+// =============================================================================
+
 func (u *authUsecase) Login(ctx context.Context, req *dto.LoginRequest) (*dto.TokenResponse, error) {
-	// Find user by email (read-only, no transaction needed)
-	user, err := u.userRepo.FindByEmail(u.db, req.Email)
-	if err != nil {
-		u.log.Warnf("Failed to find user by email: %+v", err)
-		return nil, err
+	// ---- Rate Limit Check ----
+	attemptsKey := fmt.Sprintf("%s%s", loginAttemptsPrefix, req.Email)
+
+	count, err := u.redisClient.Get(ctx, attemptsKey).Int()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		go u.log.Warnf("Failed to get login attempts: %+v", err)
+		// Non-blocking: if Redis is down, allow login attempt
+	}
+	if count >= maxLoginAttempts {
+		go u.log.Warnf("Account locked for email %s: too many login attempts", req.Email)
+		// Non-blocking audit log: account locked
+		go func() {
+			ctx := context.Background()
+			u.auditService.LogCreate(ctx, u.db, nil, "user.login_locked", "user", "", entity.JSON{
+				"email":  req.Email,
+				"reason": "too many login attempts",
+			})
+		}()
+		return nil, ErrAccountLocked
 	}
 
-	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+	// ---- Find User ----
+	user, err := u.userRepo.FindByEmail(u.db, req.Email)
+	if err != nil {
+		go u.log.Warnf("Failed to find user by email: %+v", err)
+		// Increment attempt on user-not-found to prevent enumeration
+		u.incrementLoginAttempts(ctx, attemptsKey)
 		return nil, ErrInvalidCredentials
 	}
 
-	// Generate tokens
+	// ---- Verify Password ----
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		go u.log.Warnf("Invalid credentials for email %s: %+v", req.Email, err)
+		u.incrementLoginAttempts(ctx, attemptsKey)
+		// Non-blocking audit log: login failed
+		go func() {
+			ctx := context.Background()
+			u.auditService.LogCreate(ctx, u.db, &user.ID, "user.login_failed", "user", user.ID.String(), entity.JSON{
+				"email":  req.Email,
+				"reason": "invalid password",
+			})
+		}()
+		return nil, ErrInvalidCredentials
+	}
+
+	// ---- Password correct: reset attempts ----
+	if delErr := u.redisClient.Del(ctx, attemptsKey).Err(); delErr != nil {
+		go u.log.Warnf("Failed to reset login attempts: %+v", delErr)
+	}
+
+	// ---- Generate Tokens ----
 	accessToken, accessTokenID, err := u.jwtService.GenerateAccessToken(user.ID, user.Email, user.RoleID)
 	if err != nil {
-		u.log.Warnf("Failed to generate access token: %+v", err)
+		go u.log.Warnf("Failed to generate access token: %+v", err)
 		return nil, err
 	}
 
 	refreshToken, refreshTokenID, err := u.jwtService.GenerateRefreshToken(user.ID, user.Email, user.RoleID)
 	if err != nil {
-		u.log.Warnf("Failed to generate refresh token: %+v", err)
+		go u.log.Warnf("Failed to generate refresh token: %+v", err)
 		return nil, err
 	}
 
-	// Store tokens in Redis
+	// ---- Store tokens in Redis ----
 	accessKey := fmt.Sprintf("access_token:%s:%s", user.ID.String(), accessTokenID)
 	refreshKey := fmt.Sprintf("refresh_token:%s:%s", user.ID.String(), refreshTokenID)
 
 	if err := u.redisClient.Set(ctx, accessKey, "valid", u.jwtService.GetAccessExpiry()).Err(); err != nil {
-		u.log.Warnf("Failed to store access token in Redis: %+v", err)
+		go u.log.Warnf("Failed to store access token in Redis: %+v", err)
 		return nil, err
 	}
 
 	if err := u.redisClient.Set(ctx, refreshKey, "valid", u.jwtService.GetRefreshExpiry()).Err(); err != nil {
-		u.log.Warnf("Failed to store refresh token in Redis: %+v", err)
+		go u.log.Warnf("Failed to store refresh token in Redis: %+v", err)
 		return nil, err
 	}
+
+	// Non-blocking audit log: login success
+	go func() {
+		ctx := context.Background()
+		u.auditService.LogCreate(ctx, u.db, &user.ID, entity.AuditActionUserLogin, "user", user.ID.String(), entity.JSON{
+			"email": user.Email,
+		})
+	}()
 
 	return &dto.TokenResponse{
 		AccessToken:  accessToken,
@@ -243,6 +251,20 @@ func (u *authUsecase) Login(ctx context.Context, req *dto.LoginRequest) (*dto.To
 		ExpiresIn:    int64(u.jwtService.GetAccessExpiry().Seconds()),
 	}, nil
 }
+
+// incrementLoginAttempts atomically increments the login attempt counter.
+// Sets TTL to loginLockoutPeriod on first increment.
+func (u *authUsecase) incrementLoginAttempts(ctx context.Context, key string) {
+	lockoutSeconds := int(loginLockoutPeriod.Seconds())
+	_, err := loginRateLimitScript.Run(ctx, u.redisClient, []string{key}, lockoutSeconds).Int()
+	if err != nil {
+		go u.log.Warnf("Failed to increment login attempts: %+v", err)
+	}
+}
+
+// =============================================================================
+// Logout
+// =============================================================================
 
 func (u *authUsecase) Logout(ctx context.Context, accessTokenID, refreshTokenID string) error {
 	// Delete tokens from Redis (pattern matching to find and delete)
@@ -277,6 +299,10 @@ func (u *authUsecase) Logout(ctx context.Context, accessTokenID, refreshTokenID 
 
 	return nil
 }
+
+// =============================================================================
+// RefreshToken
+// =============================================================================
 
 func (u *authUsecase) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.TokenResponse, error) {
 	// Validate refresh token
@@ -340,6 +366,10 @@ func (u *authUsecase) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 	}, nil
 }
 
+// =============================================================================
+// GetCurrentUser
+// =============================================================================
+
 func (u *authUsecase) GetCurrentUser(ctx context.Context, userID uuid.UUID) (*dto.UserResponse, error) {
 	user, err := u.userRepo.FindByID(u.db, userID)
 	if err != nil {
@@ -353,7 +383,11 @@ func (u *authUsecase) GetCurrentUser(ctx context.Context, userID uuid.UUID) (*dt
 	return converter.UserToResponse(user), nil
 }
 
-// Helper function to check if token is valid in Redis
+// =============================================================================
+// Helper: Token Validation
+// =============================================================================
+
+// IsTokenValid checks if a token is valid in Redis
 func (u *authUsecase) IsTokenValid(ctx context.Context, userID uuid.UUID, tokenID string, tokenType jwt.TokenType) (bool, error) {
 	var key string
 	if tokenType == jwt.AccessToken {
@@ -404,6 +438,10 @@ func (u *authUsecase) RevokeAllUserTokens(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
+// =============================================================================
+// Helper: PostgreSQL Error Checks
+// =============================================================================
+
 // isDuplicateKeyError checks if the error is a PostgreSQL unique constraint violation
 // containing the specified constraint name
 func isDuplicateKeyError(err error, constraintName string) bool {
@@ -429,6 +467,3 @@ func isForeignKeyError(err error, constraintName string) bool {
 	}
 	return false
 }
-
-// Compile time check
-var _ time.Duration

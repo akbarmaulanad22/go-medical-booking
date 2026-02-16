@@ -3,9 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"go-template-clean-architecture/internal/delivery/dto"
 	"go-template-clean-architecture/internal/delivery/http/middleware"
+	"go-template-clean-architecture/internal/domain/entity"
 	"go-template-clean-architecture/internal/usecase"
 	"go-template-clean-architecture/pkg/jwt"
 	"go-template-clean-architecture/pkg/response"
@@ -49,7 +51,29 @@ func (h *AuthHandler) RegisterPatient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.authUsecase.RegisterPatient(r.Context(), &req)
+	// Parse date of birth
+	dob, err := time.Parse("2006-01-02", req.DateOfBirth)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Invalid date format, use YYYY-MM-DD", nil)
+		return
+	}
+
+	// Build User entity with PatientProfile relation
+	user := &entity.User{
+		Email:    req.Email,
+		Password: req.Password, // plaintext — usecase will hash
+		FullName: req.FullName,
+		RoleID:   entity.RoleIDPatient,
+		PatientProfile: &entity.PatientProfile{
+			NIK:         req.NIK,
+			PhoneNumber: req.PhoneNumber,
+			DateOfBirth: dob,
+			Gender:      req.Gender,
+			Address:     req.Address,
+		},
+	}
+
+	result, err := h.authUsecase.Register(r.Context(), user)
 	if err != nil {
 		switch err {
 		case usecase.ErrEmailAlreadyExists:
@@ -58,15 +82,13 @@ func (h *AuthHandler) RegisterPatient(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusConflict, "NIK already exists", nil)
 		case usecase.ErrRoleNotFound:
 			response.InternalServerError(w, "Patient role not found in system")
-		case usecase.ErrInvalidDateFormat:
-			response.Error(w, http.StatusBadRequest, "Invalid date format, use YYYY-MM-DD", nil)
 		default:
 			response.InternalServerError(w, "Failed to register patient")
 		}
 		return
 	}
 
-	response.Success(w, http.StatusCreated, "Patient registered successfully", user)
+	response.Success(w, http.StatusCreated, "Patient registered successfully", result)
 }
 
 // RegisterDoctor handles doctor registration
@@ -92,7 +114,20 @@ func (h *AuthHandler) RegisterDoctor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.authUsecase.RegisterDoctor(r.Context(), &req)
+	// Build User entity with DoctorProfile relation
+	user := &entity.User{
+		Email:    req.Email,
+		Password: req.Password, // plaintext — usecase will hash
+		FullName: req.FullName,
+		RoleID:   entity.RoleIDDoctor,
+		DoctorProfile: &entity.DoctorProfile{
+			STRNumber:      req.STRNumber,
+			Specialization: req.Specialization,
+			Biography:      req.Biography,
+		},
+	}
+
+	result, err := h.authUsecase.Register(r.Context(), user)
 	if err != nil {
 		switch err {
 		case usecase.ErrEmailAlreadyExists:
@@ -107,7 +142,7 @@ func (h *AuthHandler) RegisterDoctor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, http.StatusCreated, "Doctor registered successfully", user)
+	response.Success(w, http.StatusCreated, "Doctor registered successfully", result)
 }
 
 // Login handles user login
@@ -120,6 +155,7 @@ func (h *AuthHandler) RegisterDoctor(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} response.Response
 // @Failure 400 {object} response.Response
 // @Failure 401 {object} response.Response
+// @Failure 429 {object} response.Response
 // @Router /auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req dto.LoginRequest
@@ -138,6 +174,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		switch err {
 		case usecase.ErrInvalidCredentials:
 			response.Error(w, http.StatusUnauthorized, "Invalid email or password", nil)
+		case usecase.ErrAccountLocked:
+			response.Error(w, http.StatusTooManyRequests, "Too many login attempts, try again in 3 minutes", nil)
 		default:
 			response.InternalServerError(w, "Failed to login")
 		}

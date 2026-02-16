@@ -110,7 +110,7 @@ func initializeServer(cfg *config.Config, db *gorm.DB, redisClient *redis.Client
 	}
 
 	// Initialize usecases
-	authUsecase := usecase.NewAuthUsecase(db, log, userRepo, roleRepo, doctorProfileRepo, patientProfileRepo, jwtService, redisClient)
+	authUsecase := usecase.NewAuthUsecase(db, log, userRepo, roleRepo, jwtService, redisClient, auditService)
 	doctorProfileUsecase := usecase.NewDoctorProfileUsecase(db, log, userRepo, doctorProfileRepo, auditService)
 	doctorScheduleUsecase := usecase.NewDoctorScheduleUsecase(db, log, doctorScheduleRepo, auditService, redisSyncService)
 	auditUsecase := usecase.NewAuditLogUsecase(db, log, auditRepo)
